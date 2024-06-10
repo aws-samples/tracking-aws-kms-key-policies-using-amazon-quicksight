@@ -1,0 +1,59 @@
+# Author: Alex Goff
+# Event: DAP241 - re:Inforce 2024 - June 10th-12th 2024
+#
+# Part 1 of 3 CloudFormation files for member / spoke accounts.
+# This template creates the IAM Role that the KMS Read Lambda will assume.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "KMS Keys"
+Parameters:
+  KMSReadLambdaAccount:
+    Description: AWS Account where the KMS Read Lambda is deployed
+    Default: 123456789012
+    Type: String
+  KMSReadRoleName:
+    Description: Name of the KMS Read Lambda IAM Role. Needs to match KMSReadRole IAM Policy
+    Default: XA-KMSRead-Role
+    Type: String
+
+Resources:
+  # KMS Read Lambda IAM Role
+  KMSReadRole:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "Short lived workshop.  More granular permissions not needed"
+          - id: W28
+            reason: "Short lived workshop.  Resources will not be replaced - only torn down and deleted."
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement: 
+          - Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${KMSReadLambdaAccount}:root"
+            Action: 
+              sts:AssumeRole
+      Description: This role allows the central KMS Policy Lambda to read the details of the KMS keys in the account
+      Path: /
+      Policies:
+        - PolicyName: LambdaPolicy
+          PolicyDocument: 
+            Version: 2012-10-17
+            Statement: 
+              - Effect: Allow
+                Action: 
+                - "kms:ListKeys"
+                - "kms:ListAliases"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                - "kms:ListKeyPolicies"
+                - "kms:GetKeyPolicy"
+                - "kms:ListResourceTags"
+                - "kms:DescribeKey"
+                Resource: "arn:aws:kms:*:*:key/*"
+      RoleName: !Ref KMSReadRoleName
+

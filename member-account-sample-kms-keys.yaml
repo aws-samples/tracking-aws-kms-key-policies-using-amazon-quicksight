@@ -1,0 +1,630 @@
+# Author: Alex Goff
+# Event: DAP241 - re:Inforce 2024 - June 10th-12th 2024
+#
+# OPTIONAL! Part 3 of 3 CloudFormation files for member / spoke accounts.
+# This template deploys some sample KMS keys
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "KMS Keys for re:Inforce 2024 Workshop along with example IAM roles and users for key policies"
+Resources:
+# IAM Users for KMS Keys
+  IAMUserAlice:
+    Type: AWS::IAM::User
+    Properties:
+      Path: "/"
+  IAMUserBob:
+    Type: AWS::IAM::User
+    Properties:
+      Path: "/"
+
+# User IAM Role for KMS Key Policies
+  AdministratorRole:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "Short lived workshop.  More granular permissions not needed"
+          - id: W28
+            reason: "Short lived workshop.  Resources will not be replaced - only torn down and deleted."
+    Type: 'AWS::IAM::Role'
+    Properties:
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+              - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+  DeveloperRole:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "Short lived workshop.  More granular permissions not needed"
+          - id: W28
+            reason: "Short lived workshop.  Resources will not be replaced - only torn down and deleted."
+    Type: 'AWS::IAM::Role'
+    Properties:
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+              - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+
+# Keys
+  myKeyWithTag:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F19
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+      checkov:
+        skip:
+          - id: "CKV_AWS_7"
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+    Type: 'AWS::KMS::Key'
+    Properties:
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: key-default-2
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: 'kms:*'
+            Resource: '*'
+      Tags:
+        - Key: Owner
+          Value: Goffy
+  RSASigningKey:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F19
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+      checkov:
+        skip:
+          - id: "CKV_AWS_7"
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+    Type: 'AWS::KMS::Key'
+    Properties:
+      Description: RSA-3072 asymmetric KMS key for signing and verification
+      KeySpec: RSA_3072
+      KeyUsage: SIGN_VERIFY
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: key-default-3
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow administration of the key
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt AdministratorRole.Arn
+            Action:
+              - 'kms:Create*'
+              - 'kms:Describe*'
+              - 'kms:Enable*'
+              - 'kms:List*'
+              - 'kms:Put*'
+              - 'kms:Update*'
+              - 'kms:Revoke*'
+              - 'kms:Disable*'
+              - 'kms:Get*'
+              - 'kms:Delete*'
+              - 'kms:ScheduleKeyDeletion'
+              - 'kms:CancelKeyDeletion'
+            Resource: '*'
+          - Sid: Allow use of the key
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt AdministratorRole.Arn
+            Action:
+              - 'kms:Sign'
+              - 'kms:Verify'
+              - 'kms:DescribeKey'
+            Resource: '*'
+  kmsKey1:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F19
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+      checkov:
+        skip:
+          - id: "CKV_AWS_7"
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+    Type: AWS::KMS::Key
+    Properties:
+      Description: An example symmetric encryption KMS key
+      EnableKeyRotation: true
+      PendingWindowInDays: 20
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: key-default-1
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow administration of the key
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt IAMUserAlice.Arn
+            Action:
+              - 'kms:Create*'
+              - 'kms:Describe*'
+              - 'kms:Enable*'
+              - 'kms:List*'
+              - 'kms:Put*'
+              - 'kms:Update*'
+              - 'kms:Revoke*'
+              - 'kms:Disable*'
+              - 'kms:Get*'
+              - 'kms:Delete*'
+              - 'kms:ScheduleKeyDeletion'
+              - 'kms:CancelKeyDeletion'
+            Resource: '*'
+          - Sid: Allow use of the key
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt IAMUserBob.Arn
+            Action:
+              - 'kms:DescribeKey'
+              - 'kms:Encrypt'
+              - 'kms:Decrypt'
+              - 'kms:ReEncrypt*'
+              - 'kms:GenerateDataKey'
+              - 'kms:GenerateDataKeyWithoutPlaintext'
+            Resource: '*'
+  HMACExampleKey:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F19
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+      checkov:
+        skip:
+          - id: "CKV_AWS_7"
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+    Type: 'AWS::KMS::Key'
+    Properties:
+      Description: HMAC_384 key for tokens
+      KeySpec: HMAC_384
+      KeyUsage: GENERATE_VERIFY_MAC
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: key-default-1
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow administration of the key
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt AdministratorRole.Arn
+            Action:
+              - 'kms:Create*'
+              - 'kms:Describe*'
+              - 'kms:Enable*'
+              - 'kms:List*'
+              - 'kms:Put*'
+              - 'kms:Update*'
+              - 'kms:Revoke*'
+              - 'kms:Disable*'
+              - 'kms:Get*'
+              - 'kms:Delete*'
+              - 'kms:ScheduleKeyDeletion'
+              - 'kms:CancelKeyDeletion'
+            Resource: '*'
+          - Sid: Allow use of the key
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt DeveloperRole.Arn
+            Action:
+              - 'kms:GenerateMac'
+              - 'kms:VerifyMac'
+              - 'kms:DescribeKey'
+            Resource: '*'
+  myPrimaryKey:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F19
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+      checkov:
+        skip:
+          - id: "CKV_AWS_7"
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+    Type: 'AWS::KMS::Key'
+    Properties:
+      Description: An example multi-Region primary key
+      MultiRegion: true
+      EnableKeyRotation: true
+      PendingWindowInDays: 10
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: key-default-1
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow administration of the key
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt IAMUserAlice.Arn
+            Action:
+              - 'kms:ReplicateKey'
+              - 'kms:Create*'
+              - 'kms:Describe*'
+              - 'kms:Enable*'
+              - 'kms:List*'
+              - 'kms:Put*'
+              - 'kms:Update*'
+              - 'kms:Revoke*'
+              - 'kms:Disable*'
+              - 'kms:Get*'
+              - 'kms:Delete*'
+              - 'kms:ScheduleKeyDeletion'
+              - 'kms:CancelKeyDeletion'
+            Resource: '*'
+          - Sid: Allow use of the key
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt IAMUserBob.Arn
+            Action:
+              - 'kms:DescribeKey'
+              - 'kms:Encrypt'
+              - 'kms:Decrypt'
+              - 'kms:ReEncrypt*'
+              - 'kms:GenerateDataKey'
+              - 'kms:GenerateDataKeyWithoutPlaintext'
+            Resource: '*'
+  MyKey:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F19
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+      checkov:
+        skip:
+          - id: "CKV_AWS_7"
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+    Type: AWS::KMS::Key
+    Properties:
+      Description: "My KMS key"
+      KeySpec: SYMMETRIC_DEFAULT
+      KeyUsage: ENCRYPT_DECRYPT
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: MyKeyPolicy
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow administration of the key
+            Effect: Allow
+            Principal:
+                AWS: !GetAtt AdministratorRole.Arn
+            Action:
+              - 'kms:Create*'
+              - 'kms:Describe*'
+              - 'kms:Enable*'
+              - 'kms:List*'
+              - 'kms:Put*'
+              - 'kms:Update*'
+              - 'kms:Revoke*'
+              - 'kms:Disable*'
+              - 'kms:Get*'
+              - 'kms:Delete*'
+              - 'kms:TagResource'
+              - 'kms:UntagResource'
+              - 'kms:ScheduleKeyDeletion'
+              - 'kms:CancelKeyDeletion'
+              - 'kms:ReplicateKey'
+              - 'kms:UpdatePrimaryRegion'
+            Resource: '*'
+
+          - Sid: Allow use of the key
+            Effect: Allow
+            Principal:
+                AWS: !GetAtt IAMUserAlice.Arn
+            Action:
+              - 'kms:Encrypt'
+              - 'kms:Decrypt'
+              - 'kms:GenerateDataKey'
+              - 'kms:GenerateDataKeyWithoutPlaintext'
+              - 'kms:DescribeKey'
+            Resource: '*'
+  UnicornKey:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F19
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+      checkov:
+        skip:
+          - id: "CKV_AWS_7"
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+    Type: AWS::KMS::Key
+    Properties:
+      Description: "Unicorn KMS key"
+      KeySpec: SYMMETRIC_DEFAULT
+      KeyUsage: ENCRYPT_DECRYPT
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: MyKeyPolicy
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow administration of the key
+            Effect: Allow
+            Principal:
+                AWS: !GetAtt AdministratorRole.Arn
+            Action:
+              - 'kms:*'
+            Resource: '*'
+
+          - Sid: Allow use of the key
+            Effect: Allow
+            Principal:
+                AWS: !GetAtt IAMUserAlice.Arn
+            Action:
+              - 'kms:Encrypt'
+              - 'kms:Decrypt'
+              - 'kms:GenerateDataKey'
+              - 'kms:GenerateDataKeyWithoutPlaintext'
+              - 'kms:DescribeKey'
+            Resource: '*'
+  UnicornKey2:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F19
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+      checkov:
+        skip:
+          - id: "CKV_AWS_7"
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+    Type: AWS::KMS::Key
+    Properties:
+      Description: "Unicorn 2 KMS key"
+      KeySpec: SYMMETRIC_DEFAULT
+      KeyUsage: ENCRYPT_DECRYPT
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: MyKeyPolicy
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action:
+              - 'kms:Create*'
+              - 'kms:Describe*'
+              - 'kms:Enable*'
+              - 'kms:List*'
+              - 'kms:Put*'
+              - 'kms:Update*'
+              - 'kms:Revoke*'
+              - 'kms:Disable*'
+              - 'kms:Get*'
+              - 'kms:Delete*'
+              - 'kms:TagResource'
+              - 'kms:UntagResource'
+              - 'kms:ScheduleKeyDeletion'
+              - 'kms:CancelKeyDeletion'
+              - 'kms:ReplicateKey'
+              - 'kms:UpdatePrimaryRegion'
+            Resource: '*'
+          - Sid: Allow administration of the key
+            Effect: Allow
+            Principal:
+                AWS: !GetAtt AdministratorRole.Arn
+            Action:
+              - 'kms:*'
+            Resource: '*'
+
+          - Sid: Allow use of the key
+            Effect: Allow
+            Principal:
+                AWS: !GetAtt IAMUserBob.Arn
+            Action:
+              - 'kms:*'
+            Resource: '*'
+  UnicornKey3:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F19
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+      checkov:
+        skip:
+          - id: "CKV_AWS_7"
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+    Type: AWS::KMS::Key
+    Properties:
+      Description: "Unicorn 3 KMS key"
+      KeySpec: SYMMETRIC_DEFAULT
+      KeyUsage: ENCRYPT_DECRYPT
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: MyKeyPolicy
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action:
+              - 'kms:Create*'
+              - 'kms:Describe*'
+              - 'kms:Enable*'
+              - 'kms:List*'
+              - 'kms:Put*'
+              - 'kms:Update*'
+              - 'kms:Revoke*'
+              - 'kms:Disable*'
+              - 'kms:Get*'
+              - 'kms:Delete*'
+              - 'kms:TagResource'
+              - 'kms:UntagResource'
+              - 'kms:ScheduleKeyDeletion'
+              - 'kms:CancelKeyDeletion'
+              - 'kms:ReplicateKey'
+              - 'kms:UpdatePrimaryRegion'
+            Resource: '*'
+          - Sid: Allow administration of the key
+            Effect: Allow
+            Principal:
+                AWS: !GetAtt AdministratorRole.Arn
+            Action:
+              - 'kms:*'
+            Resource: '*'
+
+          - Sid: Allow use of the key
+            Effect: Allow
+            Principal:
+                AWS: !GetAtt IAMUserBob.Arn
+            Action:
+              - 'kms:*'
+            Resource: '*'
+  UnicornRSASigningKey:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F19
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+      checkov:
+        skip:
+          - id: "CKV_AWS_7"
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+    Type: 'AWS::KMS::Key'
+    Properties:
+      Description: Unicorn RSA-3072 asymmetric KMS key for signing and verification
+      KeySpec: RSA_3072
+      KeyUsage: SIGN_VERIFY
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: sign-policy-1
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow administration of the key
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt IAMUserAlice.Arn
+            Action:
+              - 'kms:*'
+            Resource: '*'
+          - Sid: Allow use of the key
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt IAMUserBob.Arn
+            Action:
+              - 'kms:Sign'
+              - 'kms:Verify'
+              - 'kms:DescribeKey'
+            Resource: '*'
+  UnicornRSASigningKey2:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F19
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+      checkov:
+        skip:
+          - id: "CKV_AWS_7"
+            reason: "Short lived workshop.  Key Rotation intentionally left off this key"
+    Type: 'AWS::KMS::Key'
+    Properties:
+      Description: Unicorn RSA-3072 asymmetric KMS key for signing and verification
+      KeySpec: RSA_3072
+      KeyUsage: SIGN_VERIFY
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: sign-policy-2
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow administration of the key
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt IAMUserAlice.Arn
+            Action:
+              - 'kms:*'
+            Resource: '*'
+          - Sid: Allow use of the key
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt IAMUserBob.Arn
+            Action:
+              - 'kms:*'
+            Resource: '*'
+
+# Aliases
+  myAlias:
+    Type: 'AWS::KMS::Alias'
+    Properties:
+      AliasName: alias/key1
+      TargetKeyId: !Ref MyKey
+  kmsKey1Alias:          
+    Type: 'AWS::KMS::Alias'
+    Properties:
+      AliasName: alias/Encryptionkey
+      TargetKeyId: !Ref kmsKey1
+  myPrimaryKeyAlias:
+    Type: 'AWS::KMS::Alias'
+    Properties:
+      AliasName: alias/Lambdakey
+      TargetKeyId: !Ref myPrimaryKey
+  myAlias2:
+    Type: 'AWS::KMS::Alias'
+    Properties:
+      AliasName: alias/RSASigningKEy
+      TargetKeyId: !Ref RSASigningKey
+  HMACExampleKeyAlias:          
+    Type: 'AWS::KMS::Alias'
+    Properties:
+      AliasName: alias/KeyForHMAC
+      TargetKeyId: !Ref HMACExampleKey

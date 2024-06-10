@@ -1,0 +1,357 @@
+# Author: Alex Goff
+# Event: DAP241 - re:Inforce 2024 - June 10th-12th 2024
+#
+# Part 3 of 3 CloudFormation files for the Security Observability account
+# This template deploys the Athena and Quicksight resources
+
+AWSTemplateFormatVersion: 2010-09-09
+Description: Create Athena database for KMS Dashboard
+
+Parameters:
+  Prefix:
+    Default: kmsdashboard
+    Type: String
+  BucketNamePrefix:
+    Default: kms-read-policy
+    Type: String
+  LambdaRoleName:
+    Default: KMSReadLambdaRole
+    Type: String
+  
+Resources:
+# Set up Athena
+  executeCreateKMSDashboardDatabase:
+    Type: Custom::executeAthenaQuery
+    Properties:
+      ServiceToken: !GetAtt LambdaFunctionExecuteQuery.Arn
+      queryoutput: !Join ["",[ "s3://", !Ref S3BucketAthenaWorkGroup, "/athena-results/" ] ]
+      QueryString: !Sub 'CREATE DATABASE IF NOT EXISTS ${Prefix}database; '
+  executeCreateKMSDashboardFindingsTable:
+    Type: Custom::executeAthenaQuery
+    DependsOn: executeCreateKMSDashboardDatabase
+    Properties:
+      ServiceToken: !GetAtt LambdaFunctionExecuteQuery.Arn
+      queryoutput: !Join ["",[ "s3://", !Ref S3BucketAthenaWorkGroup, "/athena-results/" ] ]
+      QueryString: !Join 
+        - '' 
+        - - " CREATE EXTERNAL TABLE IF NOT EXISTS "
+          - !Sub ${Prefix}database.${Prefix}table 
+          - " ( "
+          - " `date` string, "
+          - " `accountnumber` string, "
+          - " `accountname` string, "
+          - " `region` string, "
+          - " `keyid` string, "
+          - " `alias` string, "
+          - " `sid` string, "
+          - " `effect` string, "
+          - " `principal` string, "
+          - " `principalservice` string, "
+          - " `action` string, "
+          - " `condition` string, "
+          - " `concern` string, "
+          - " `resource` string, "
+          - " `tags` string, "
+          - " `creationdate` string, "
+          - " `lastusedtime` string, "
+          - " `lastusedaction` string, "
+          - " `lastusedencryptioncontext` string, "
+          - " `lastusedsourceipaddress` string, "
+          - " `lastusedusername` string "
+          - " ) "
+          - " ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe' "
+          - " WITH SERDEPROPERTIES ('field.delim' = ',') "
+          - " STORED AS INPUTFORMAT 'org.apache.hadoop.mapred.TextInputFormat' OUTPUTFORMAT 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat' "
+          - !Sub " LOCATION 's3://${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}/' "
+          - " TBLPROPERTIES ( "
+          - " 'classification' = 'csv', "
+          - "  'write.compression' = 'GZIP', "
+          - "  'skip.header.line.count' = '1' "
+          - " ); "
+  LambdaFunctionExecuteQuery:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W89
+            reason: 'Lambdas only used to stand up Athena.  No need to be in VPC'
+      checkov:
+        skip:
+          - id: "CKV_AWS_117"
+            reason: "No other resources created inside VPCs therefore not needed"
+          - id: "CKV_AWS_116"
+            reason: "Lambdas only used to stand up Athena.  No need for DLQ"
+          - id: "CKV_AWS_173"
+            comment: "No sensitive data in Lambda env variables. No need for encrypting strings" 
+
+
+    Type: AWS::Lambda::Function
+    Properties:
+      ReservedConcurrentExecutions: 3
+      Code:
+        ZipFile: |
+          # SPDX-License-Identifier: MIT-0
+          import boto3
+          import time
+          import os
+          import cfnresponse
+          from botocore.exceptions import ClientError
+          def lambda_handler(event, context):
+            print(f"context: {context}")
+            print(f"event: {event}")
+            if (event['RequestType'] == 'Create' or event['RequestType'] == 'Update'):
+              try:
+                client = boto3.client('athena')
+                query = event['ResourceProperties']['QueryString']
+                print(query)
+                queryoutput = event['ResourceProperties']['queryoutput']
+                response = client.start_query_execution(QueryString=query, ResultConfiguration={'OutputLocation': queryoutput}, WorkGroup=os.getenv('athena_workgroup'))
+                print(response)
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              except Exception as ex:
+                print(ex)
+                cfnresponse.send(event, context, cfnresponse.FAILED, {})
+            else:
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+      Handler: index.lambda_handler
+      Role: !GetAtt IAMRoleExecuteQueryAthena.Arn
+      Runtime: python3.9
+      MemorySize: 128
+      Timeout: 200
+      Description: Lambda for Athena Execute Query
+      Environment:
+        Variables:
+          bucket_name: !Ref S3BucketAthenaWorkGroup
+          athena_workgroup: !Ref AthenaWorkGroup
+  AthenaWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties: 
+      Description: Athena WorkGroup for KMSDashboard
+      Name: !Sub '${Prefix}-athena-workgroup'
+      RecursiveDeleteOption: True
+      State: ENABLED
+      WorkGroupConfiguration: 
+        EnforceWorkGroupConfiguration: True
+        PublishCloudWatchMetricsEnabled: True
+        RequesterPaysEnabled: False
+        ResultConfiguration: 
+          OutputLocation: !Join ['', ['s3://', !Ref 'S3BucketAthenaWorkGroup', '/athena-results/']]
+          EncryptionConfiguration:
+            EncryptionOption: SSE_S3
+  LoggingBucket:
+    Type: 'AWS::S3::Bucket'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W51
+            reason: "Access intended only within the same account"
+          - id: W35
+            reason: "This is a S3 bucket to store access logs from S3BucketAthenaWorkGroup"
+      checkov:
+        skip:
+          - id: "CKV_AWS_18"
+            reason: "This is the logging bucket! For S3BucketAthenaWorkGroup"
+    Properties:
+      BucketName: !Sub "${Prefix}-athena-loggingbucket-${AWS::AccountId}-${AWS::Region}"
+      AccessControl: LogDeliveryWrite
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+  IAMRoleExecuteQueryAthena:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      AssumeRolePolicyDocument: 
+        Version: '2012-10-17'
+        Statement: 
+        - Effect: Allow
+          Principal: 
+            Service: 
+              - lambda.amazonaws.com
+          Action: 
+          - sts:AssumeRole
+      Policies:
+      - PolicyName: getS3Data
+        PolicyDocument: 
+          Version: '2012-10-17'
+          Statement: 
+          - Effect: Allow
+            Action:
+            - s3:PutObject
+            - s3:GetBucketLocation
+            - s3:GetObject
+            - s3:ListBucket
+            - s3:ListBucketMultipartUploads
+            - s3:ListMultipartUploadParts
+            - s3:AbortMultipartUpload
+            - s3:PutObject
+            Resource:
+            - !Join ['', ['arn:aws:s3:::', !Ref S3BucketAthenaWorkGroup]]
+            - !Join ['', ['arn:aws:s3:::', !Ref S3BucketAthenaWorkGroup, '/*']]
+            - !Sub 'arn:aws:s3:::${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}'
+            - !Sub 'arn:aws:s3:::${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}/*'
+          - Effect: Allow
+            Action: 
+            - glue:CreateDatabase
+            - glue:CreateTable
+            - glue:GetDatabase
+            - glue:GetDatabases
+            - glue:GetTables
+            - glue:GetTable
+            Resource:
+            - !Sub arn:aws:glue:*:${AWS::AccountId}:catalog
+            - !Sub arn:aws:glue:*:${AWS::AccountId}:database/*
+            - !Sub arn:aws:glue:*:${AWS::AccountId}:table/*/*
+      - PolicyName: queryAthena
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement: 
+          - Effect: Allow
+            Action:
+            - athena:StartQueryExecution
+            - athena:GetQueryExecution
+            - athena:GetQueryResults
+            - athena:CreateNamedQuery
+            - athena:CreateWorkGroup
+            Resource:
+            - !Sub 'arn:aws:athena:${AWS::Region}:${AWS::AccountId}:workgroup/${AthenaWorkGroup}'
+  S3BucketAthenaWorkGroup:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${Prefix}-athenaworkgroupbucket-${AWS::AccountId}-${AWS::Region}"
+      LoggingConfiguration:
+        DestinationBucketName: !Ref LoggingBucket
+      AccessControl: Private
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls       : True
+        BlockPublicPolicy     : True
+        IgnorePublicAcls      : True
+        RestrictPublicBuckets : True
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+  S3BucketPolicyAthenaWorkGroup:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F16
+            reason: "Wildcard allowed by restricted with Conditions to reduce risk"
+
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3BucketAthenaWorkGroup
+      PolicyDocument:
+        Statement:
+          -
+            Action:
+              - s3:GetObject
+              - s3:ListBucket
+              - s3:PutObject
+            Effect: Allow
+            Resource:
+              - !Sub arn:aws:s3:::${S3BucketAthenaWorkGroup}
+              - !Sub arn:aws:s3:::${S3BucketAthenaWorkGroup}/*
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+
+# Quicksight Role
+  QuickSightRole:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "Short lived workshop.  More granular permissions not needed"
+          - id: W28
+            reason: "Short lived workshop.  Resources will not be replaced - only torn down and deleted."
+      checkov:
+        skip:
+          - id: "CKV_AWS_109"
+            comment: "Short lived workshop. Students are allowed to experiment until workshop expires and is deleted." 
+          - id: "CKV_AWS_110"
+            comment: "Short lived workshop. Trust Policy means role can only be assumed from by Quicksight service." 
+    Type: 'AWS::IAM::Role'
+    Properties:
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSQuicksightAthenaAccess
+      - arn:aws:iam::aws:policy/service-role/QuickSightAccessForS3StorageManagementAnalyticsReadOnly
+      - arn:aws:iam::aws:policy/service-role/AWSQuickSightTimestreamPolicy
+      - arn:aws:iam::aws:policy/service-role/AWSQuickSightSageMakerPolicy
+      - arn:aws:iam::aws:policy/AWSQuickSightIoTAnalyticsAccess
+      - arn:aws:iam::aws:policy/service-role/AWSQuickSightElasticsearchPolicy
+
+      AssumeRolePolicyDocument: 
+        Version: '2012-10-17'
+        Statement: 
+        - Effect: Allow
+          Principal: 
+            Service: 
+              - quicksight.amazonaws.com
+          Action: 
+          - sts:AssumeRole
+      Description: This role is for Quicksight to use
+      Path: /service-role/
+      Policies:
+        - PolicyName: QuicksightPolicy
+          PolicyDocument: 
+            Version: 2012-10-17
+            Statement: 
+              - Sid: AWSQuickSightIAMPolicy
+                Effect: Allow
+                Action: 
+                - "iam:List*"
+                - "iam:CreateRole"
+                - "iam:CreatePolicy"
+                - "iam:AttachRolePolicy"
+                - "iam:CreatePolicyVersion"
+                - "iam:DeletePolicyVersion"
+                - "iam:ListAttachedRolePolicies"
+                - "iam:GetRole"
+                - "iam:GetPolicy"
+                - "iam:DetachRolePolicy"
+                - "iam:GetPolicyVersion"
+                Resource: "*"
+              - Sid: AWSQuickSightS3PolicyList
+                Effect: Allow
+                Action: 
+                - "s3:ListAllMyBuckets"
+                - "s3:ListBucket"
+                Resource: "arn:aws:s3:::*"
+              - Sid: AWSQuickSightS3Policy
+                Effect: Allow
+                Action:
+                - "s3:Get*"
+                - "s3:List*"
+                - "s3:PutObject"
+                Resource: !Sub "arn:aws:s3:::kms-read-policy-${AWS::AccountId}-${AWS::Region}/*"
+      RoleName: QuicksightRole
+
+Outputs:
+  AthenaCustomResourceLambda:
+    Description: Athena Custom Resource Lambda
+    Value: !Ref LambdaFunctionExecuteQuery
+    Export:
+      Name: AthenaCustomResourceLambda
+  AthenaCustomResourceLambdaArn:
+    Description: Athena Custom Resource Lambda
+    Value: !GetAtt LambdaFunctionExecuteQuery.Arn
+    Export:
+      Name: AthenaCustomResourceLambdaArn   
+

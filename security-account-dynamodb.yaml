@@ -1,0 +1,157 @@
+# Author: Alex Goff
+# Event: DAP241 - re:Inforce 2024 - June 10th-12th 2024
+#
+# Part 1 of 3 CloudFormation files for the Security Observability account
+# This template deploys the 'lastUsedDate' and 'accounts' DynamoDB tables
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "KMS Last Used DynamoDB Table"
+Parameters:
+  accountsTableName:
+    Description: DynamoDB Table for storing a list of valid accounts
+    Default: accounts
+    Type: String
+  readDynamoDBRoleName:
+    Description: Name of IAM role with permission to read from DynamoDB
+    Default: ReadDynamoDBRole
+    Type: String
+  KMSReadLambdaRoleName:
+    Description: Name of IAM role in used by KMSRead lambda function
+    Default: KMSReadLambdaRole
+    Type: String
+  lastUsedTableName:
+    Description: DynamoDB Table for storing KMS last used dates from CloudTrail
+    Default: lastUsedTable
+    Type: String
+  lastUsedDynamoDBLamdaRoleName:
+    Description: Name of DynamoDB Lambda Role for lastUsedLambdas to assume to.
+    Default: putToDynamoRole
+    Type: String
+  lastUsedLambdaRoleName:
+    Description: Name of lastUsedLambda Role deployed in member accounts. Needed for AssumeRole Trust Policy
+    Default: lastUsedLambdaRole
+    Type: String
+Resources:
+  #DynamoDB Table for a list of accounts
+  accountDynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Metadata:
+      checkov:
+        skip:
+          - id: "CKV_AWS_119"
+            reason: "This is proof of concept code. Customers should review their encryption requirements and use CMKs if required"
+    Properties:
+      KeySchema:
+        - AttributeName: accountId #Use accountId as PartitionKey
+          KeyType: HASH
+      TableName: !Ref accountsTableName
+      AttributeDefinitions: 
+        - AttributeName: accountId 
+          AttributeType: "S"
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  lastUsedDynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Metadata:
+      checkov:
+        skip:
+          - id: "CKV_AWS_119"
+            reason: "This is proof of concept code. Customers should review their encryption requirements and use CMKs if required"
+    Properties:
+      KeySchema:
+        - AttributeName: keyID #Use KMS keyID as PartitionKey
+          KeyType: HASH
+      TableName: !Ref lastUsedTableName
+      AttributeDefinitions: 
+        - AttributeName: keyID #KMS keyID is a 'string'
+          AttributeType: "S"
+      BillingMode: PAY_PER_REQUEST
+      TimeToLiveSpecification:
+        AttributeName: TimetoLive
+        Enabled: True
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  lastUsedDynamoDBRoleForLambdas:
+    Type: "AWS::IAM::Role"
+    Metadata:
+      checkov:
+        skip:
+          - id: "CKV_AWS_60"
+            reason: "IAM role has been scoped down with a condition key to ensure compliance. Customers can further secure by explicitly listing accounts instead of '*'"
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            AWS: "*"
+          Action: sts:AssumeRole
+          Condition:
+            StringLike:
+              aws:PrincipalArn:
+              - !Sub "arn:aws:iam::*:role/${lastUsedLambdaRoleName}-*"
+      Path: /
+      Policies:
+        - PolicyName: DynamoDBPutItem-Policy
+          PolicyDocument:
+                Version : "2012-10-17"
+                Statement:
+                - Sid: 'DynamoDBPutItem'
+                  Effect: "Allow"
+                  Action: 
+                  - "dynamodb:PutItem"
+                  Resource: 
+                    !GetAtt lastUsedDynamoDBTable.Arn
+      RoleName: !Ref lastUsedDynamoDBLamdaRoleName
+
+  DynamoDBRole:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "Short lived workshop.  More granular permissions not needed"
+          - id: W28
+            reason: "Short lived workshop.  Resources will not be replaced - only torn down and deleted."
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref readDynamoDBRoleName
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+          Action: sts:AssumeRole
+          Condition:
+            StringLike:
+              aws:PrincipalArn:
+              - !Sub "arn:aws:iam::*:role/${KMSReadLambdaRoleName}"
+      Path: /
+      Policies:
+        - PolicyName: DynDBAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: 'ReadDynamo'
+                Effect: "Allow"
+                Action:
+                  - "dynamodb:GetItem"
+                  - "dynamodb:Scan"
+                Resource: !Sub "arn:aws:dynamodb:*:${AWS::AccountId}:table/*"
+
+Outputs:
+  lastUsedDynamoDBTableRoleForAssuming:
+    Description: "KMS CloudTrail to DynamoDB IAM Role - Assumed by Lambdas in other accounts deployed via StackSets"
+    Value: !GetAtt lastUsedDynamoDBRoleForLambdas.Arn
+  lastUsedDynamoDBTableTableName:
+    Description: "Name of Shared DynamoDB Table for storing CloudTrail records from accounts"
+    Value: !Ref lastUsedTableName
+  lastUsedDynamoDBTableTableArn:
+    Description: "Arn of Shared DynamoDB Table for storing CloudTrail records from accounts"
+    Value: !GetAtt lastUsedDynamoDBTable.Arn
