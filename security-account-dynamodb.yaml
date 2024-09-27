@@ -30,6 +30,9 @@ Parameters:
     Description: Name of lastUsedLambda Role deployed in member accounts. Needed for AssumeRole Trust Policy
     Default: lastUsedLambdaRole
     Type: String
+  awsOrganizationID:
+    Description: ID of your AWS organization
+    Type: String
 Resources:
   #DynamoDB Table for a list of accounts
   accountDynamoDBTable:
@@ -96,6 +99,10 @@ Resources:
             StringLike:
               aws:PrincipalArn:
               - !Sub "arn:aws:iam::*:role/${lastUsedLambdaRoleName}-*"
+            ForAllValues:StringEquals:
+              aws:PrincipalOrgID:
+                !Ref awsOrganizationID
+
       Path: /
       Policies:
         - PolicyName: DynamoDBPutItem-Policy
