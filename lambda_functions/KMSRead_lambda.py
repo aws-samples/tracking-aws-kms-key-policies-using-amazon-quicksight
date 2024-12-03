@@ -1,4 +1,3 @@
-# DAP241 - re:Inforce 2024 - June 10th-12th 2024
 # KMSRead_lambda function:
 # This function reads down the list of accounts in the 'accounts' DynamoDB table.
 # For every account is tries to AssumeRole into that account and then read the KMS keys

@@ -1,4 +1,3 @@
-# DAP241 - re:Inforce 2024 - June 10th-12th 2024
 # lastUsed_lambda function:
 # This function is used to read CloudTrail for KMS Events using a filter of
 #  EventSource = kms.amazonaws.com. Find the most recent events for each key.

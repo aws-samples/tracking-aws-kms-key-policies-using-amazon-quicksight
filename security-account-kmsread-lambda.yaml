@@ -1,5 +1,4 @@
 # Author: Alex Goff
-# Event: DAP241 - re:Inforce 2024 - June 10th-12th 2024
 #
 # Part 2 of 3 CloudFormation files for the Security Observability account
 # This template deploys the 'KMSRead' lambda that scans all member accounts.
@@ -188,7 +187,7 @@ Resources:
       Tags:
         - 
           Key: Project
-          Value: re:Inforce 2024
+          Value: re:Invent 2024
       Environment:
         Variables:
           DEST_BUCKET: !Sub "${kmsReadS3Bucket}-${AWS::AccountId}-${AWS::Region}"
@@ -206,7 +205,6 @@ Resources:
       Timeout: 180
       Code: 
         ZipFile: |
-          # DAP241 - re:Inforce 2024 - June 10th-12th 2024
           # KMSRead_lambda function:
           # This function reads down the list of accounts in the 'accounts' DynamoDB table.
           # For every account is tries to AssumeRole into that account and then read the KMS keys

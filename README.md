@@ -1,8 +1,7 @@
-# re:Inforce 2024 - DAP241
-# Keys to the Castle: Tracking AWS KMS key policies using Amazon QuickSight
+# Tracking AWS KMS Key Policies using Amazon Quicksight
 
 ## Architecture
-![DAP241 re:Inforce 2024 Architecture](images/rif24architecture.png)
+![Tracking AWS KMS Key Policies using Amazon Quicksight](images/rif24architecture.png)
 
 ## Overview
 
