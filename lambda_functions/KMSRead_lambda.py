@@ -20,6 +20,7 @@ from datetime import date, datetime
 # Define Imports
 import boto3
 import botocore
+from botocore.exceptions import ClientError
 
 # Logging
 logger = logging.getLogger(__name__)
@@ -91,7 +92,7 @@ def getKeyPolicies(kms, keyid):
             )
         else:
             logger.error(f"ERROR RESPONSE: {error.response}")
-            raise
+            raise error
 
 
 # Read all the account from the 'accounts' table so we know what to
@@ -132,8 +133,15 @@ def getCreationDate(kms, keyId):
 
 # Get all the tags for the keys
 def getTag(kms, keyId):
-    response = kms.list_resource_tags(KeyId=keyId)
-    return response["Tags"]
+    try:
+        response = kms.list_resource_tags(KeyId=keyId)
+        return response["Tags"]
+    except botocore.exceptions.ClientError as error:
+        if error.response["Error"]["Code"] == "AccessDeniedException":
+            logger.warning(f"Unable to get Tags: {error.response['Error']['Message']}")
+        else:
+            logger.error(f"ERROR RESPONSE: {error.response}")
+            raise error
 
 
 # Get the alias the kms key
@@ -488,26 +496,58 @@ def pushToS3(filename: str, bucketName: str):
 
     flag = os.path.isfile(file_path)
     if flag:
-        s3 = boto3.resource("s3")
-        bucket = s3.Bucket(bucketName)
+        client = boto3.resource("s3")
+        bucket = client.Bucket(bucketName)
         key = filename
         try:
             bucket.upload_file("/tmp/" + filename, key)
             logger.info(f"Successfully uploaded [{filename}] to s3://{bucketName}")
+        # generate code to handle s3 botoexceptions
+
         except FileNotFoundError as error:
             logger.error(f"{filename} not found!")
         except botocore.exceptions.ClientError as error:
-            if error.response["Error"]["Code"] == "AccessDeniedException":
+            logger.error(f"Error Dump: {error}")
+            errorCode = error.response.get("Error", {}).get("Code")
+            if errorCode == "AccessDeniedException":
                 logger.error(
                     f"Access Denied PUTting {filename} to s3://{bucket}: {error.response['Error']['Message']}"
                 )
-            elif error.response["Error"]["Code"] == "FileNotFoundError":
+            elif errorCode == "AccessDeniedException":
+                logger.error(
+                    f"Access Denied PUTting {filename} to s3://{bucket}: {error.response['Error']['Message']}"
+                )
+            elif errorCode == "FileNotFoundError":
                 logger.error(
                     f"{filename} not found!: {error.response['Error']['Message']}"
                 )
+            elif errorCode == "S3UploadFailedError":
+                logger.error(
+                    f"S3UploadFailedError: S3 Upload Failed PUTting {filename} to s3://{bucket}: {error.response['Error']['Message']}"
+                )
+            elif errorCode == "ClientError":
+                logger.error(
+                    f"ClientError: S3 Upload Failed PUTting {filename} to s3://{bucket}: {error.response['Error']['Message']}"
+                )
+
             else:
                 logger.error(f"ERROR RESPONSE: {error.response}")
-                raise
+                raise error
+        except client.meta.client.exceptions.BucketAlreadyExists as error:
+            logger.error(
+                f"Bucket {err.response['Error']['BucketName']} already exists!"
+            )
+            raise error
+        except client.meta.client.exceptions.NoSuchBucket as error:
+            logger.error(f"NoSuchBucket: No such bucket: {bucket}")
+            raise error
+        except ClientError as error:
+            logger.error(f"Unexpected error: {error}")
+            raise error
+
+        except Exception as error:
+            logger.error(f"Unexpected error: {error}")
+            raise error
 
     else:
         logger.info(f"{file_path} not found. Probably because no keys found")
@@ -566,6 +606,19 @@ def unreadableKey(principal_service: str) -> str:
     return ""
 
 
+def processAccount(
+    account_number: str, account_name: str, session: boto3.Session, region: str
+) -> list:
+    # Create a KMS session...
+    kms = session.client("kms", region_name=region)
+    # Grab all the Keys and store them in a JSON object
+    keyMap = getEverythingJson(kms)
+    filename = account_number + "-" + region + "-kms-details.csv"
+    getEverythingToCSV(account_number, account_name, filename, keyMap, region=region)
+    pushToS3(filename, destination_s3_bucket)
+    # return keyMap["kms_keys"]
+
+
 def main():
     # Use global variables to avoid passing them around
     # regions has been read from environment variables at the beginning
@@ -594,16 +647,7 @@ def main():
                 # If we successfully AssumeRole into the target account...
                 #  then loop through all the regions defined in the 'regions' env variable
                 for region in regions:
-                    # Create a KMS session...
-                    kms = session.client("kms", region_name=region)
-                    # Grab all the Keys and store them in a JSON object
-                    keyMap = getEverythingJson(kms)
-                    filename = account_number + "-" + region + "-kms-details.csv"
-                    getEverythingToCSV(
-                        account_number, account_name, filename, keyMap, region
-                    )
-                    pushToS3(filename, destination_s3_bucket)
-
+                    processAccount(account_number, account_name, session, region)
             else:
                 logger.error(f"Unable to create session for {account_number}")
     else:
