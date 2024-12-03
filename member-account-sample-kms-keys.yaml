@@ -1,10 +1,9 @@
 # Author: Alex Goff
-# Event: DAP241 - re:Inforce 2024 - June 10th-12th 2024
 #
 # OPTIONAL! Part 3 of 3 CloudFormation files for member / spoke accounts.
 # This template deploys some sample KMS keys
 AWSTemplateFormatVersion: '2010-09-09'
-Description: "KMS Keys for re:Inforce 2024 Workshop along with example IAM roles and users for key policies"
+Description: "Tracking AWS KMS Key Policies using Amazon Quicksight"
 Resources:
 # IAM Users for KMS Keys
   IAMUserAlice:

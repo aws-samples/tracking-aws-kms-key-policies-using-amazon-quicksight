@@ -1,6 +1,4 @@
 # Author: Alex Goff
-# Event: DAP241 - re:Inforce 2024 - June 10th-12th 2024
-#
 # Part 2 of 3 CloudFormation files for member / spoke accounts.
 # This template deploys the 'lastUsed' Lambda function
 
@@ -150,7 +148,7 @@ Resources:
       Tags:
         - 
           Key: Project
-          Value: re:Inforce 2024
+          Value: re:Invent 2024
       Environment:
         Variables:
           DYNAMODBROLE: !Ref putToDynamoDBRoleName
@@ -163,7 +161,6 @@ Resources:
       Timeout: 180
       Code: 
         ZipFile: |
-          # DAP241 - re:Inforce 2024 - June 10th-12th 2024
           # lastUsed_lambda function:
           # This function is used to read CloudTrail for KMS Events using a filter of
           #  EventSource = kms.amazonaws.com. Find the most recent events for each key.
