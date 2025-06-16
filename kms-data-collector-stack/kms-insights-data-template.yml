@@ -1,0 +1,542 @@
+####################################################################
+##  Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+##  SPDX-License-Identifier: MIT-0
+####################################################################
+
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  This template is used to deploy the core components of the
+  KMS Insights tool to your account.
+
+  This template will deploy the following resources:
+    Lambda Function (2x)
+    Step Function (1x)
+    EventBridge Rule (1x)
+    IAM Roles (4x)
+    CloudWatch Log Group (3x)
+    S3 Bucket (2x)
+    KMS Key (1x)
+
+###############################################################################
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: KMS Insights
+        Parameters:
+          - pS3BucketPrefix
+          - pCrossAccountIAMReadKMSRoleName
+          - pRegionsToScan
+          - pLogsRetentionInDays
+          - pEventBridgeTriggerHour
+          - pTagKey1
+          - pTagValue1
+
+    ParameterLabels:
+      pS3BucketPrefix:
+        default: The prefix of the S3 Bucket
+      pRegionsToScan:
+        default: The AWS regions to collect KMS data from
+      pLogsRetentionInDays:
+        default: The number of day to retain the CloudWatch logs for the Step Functions
+      pEventBridgeTriggerHour:
+        default: The UTC hour of the day to trigger the start of the report generation
+      pTagKey1:
+        default: Tag key to associate with all of the resources
+      pTagValue1:
+        default: Tag value for the Tag key
+
+###############################################################################
+Parameters:
+  DeploymentType:
+    Type: String
+    AllowedValues:
+      - 'local'
+      - 'org'
+      - 'list'
+
+  ##  The prefix of the S3 bucket to store the KMS Insights data and S3 access log data.
+  pS3BucketPrefix:
+    Type: String
+    Description: The prefix of the S3 bucket to store the KMS Insights data and S3 access log data.
+    Default: kms-insights
+
+  ## The name of the IAM role in all accounts to grant cross account access for the lambda function to collect KMS data
+  pCrossAccountIAMReadKMSRoleName:
+    Type: String
+    Description: The name of the IAM role in all accounts to grant cross account access for the lambda function to collect KMS data
+    Default: XA-KMSRead-Role
+
+  pRegionsToScan:
+    Type: CommaDelimitedList
+    Description: "List of regions separated by comma (,) without a space"
+
+  ## The retention days for the CloudWatch logs group
+  pLogsRetentionInDays:
+    Description: Specifies the number of days you want to retain log events in the CloudWatch log group
+    Type: Number
+    Default: 90
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
+
+  ## The hour of the day (UTC) to trigger the data collection
+  pEventBridgeTriggerHour:
+    Description: Specifies the UTC hour of the day to trigger the KMS Insights State Machine to run.
+    Type: Number
+    MinValue: 0
+    MaxValue: 23
+    Default: 09
+
+  ##  Tag key and value
+  pTagKey1:
+    Type: String
+    Description: Tag key
+    Default: managed-by
+  pTagValue1:
+    Type: String
+    Description: Tag key value
+    Default: sam-kms-insights-solution
+
+###############################################################################
+
+Resources:
+  rKMSInsightStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: kms-insights-collector-state-machine
+      DefinitionUri: statemachine/kms-insights-state-machine.json
+      DefinitionSubstitutions:
+          rListOrgAccountsLambda: !GetAtt rListOrgAccountsLambda.Arn
+          rGetKMSdataLambda: !GetAtt rGetKMSdataLambda.Arn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt rKMSInsightStateMachineLogGroup.Arn
+        Level: ERROR
+        IncludeExecutionData: true
+      Role: !GetAtt StateMachineExecutionRole.Arn
+
+  StateMachineExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StateMachineExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AllowLambdaFunctionListAWSOrgAccounts
+                Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rListOrgAccountsLambda}:*'
+              - Sid: AllowLambdaFunctionGetKMSdata
+                Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${rGetKMSdataLambda}:*'
+              - Sid: AllowCloudWatch
+                Effect: Allow
+                Action: 
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+  rKMSInsightStateMachineLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      RetentionInDays: !Ref pLogsRetentionInDays
+      KmsKeyId: !GetAtt KMSKey.Arn
+
+
+  ## The event bridge rule will trigger the state machine daily at a specific hour
+  rEventBridgeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: KMS Insights State Function Daily Trigger Rule
+      ScheduleExpression: !Sub 'cron(0 ${pEventBridgeTriggerHour} * * ? *)'
+      Targets:
+        - Arn: !GetAtt rKMSInsightStateMachine.Arn
+          Id: KMSInsights
+          RoleArn: !GetAtt rEventBridgeRuleIAMRole.Arn
+
+  ## This IAM Role is needed for the EventBridge rule to trigger the state machine
+  rEventBridgeRuleIAMRole:
+    Type: AWS::IAM::Role
+    Description: IAM role for EventBridge Rule to invoke the KMS Insights State Machine
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AllowStateFunctionExecution
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: AllowStateFunctionExecution
+                Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource: !GetAtt rKMSInsightStateMachine.Arn
+      Tags:
+        - Key: !Ref pTagKey1
+          Value: !Ref pTagValue1
+
+
+  #################################################################################
+  #   AWS Lambda function rListOrgAccountsLambda resources                         #
+  #################################################################################
+  rListOrgAccountsLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: list-accounts.handler
+      CodeUri: ./lambda/list-accounts/
+      Runtime: python3.12
+      Architectures:
+        - arm64
+      MemorySize: 1024
+      Timeout: 300
+      Description: Lambda function to list AWS Organization accounts.
+      Environment:
+        Variables:
+          DEPLOYMENT_TYPE: !Ref DeploymentType
+          # TODO: Pass LOG_LEVEL as paramater
+          LOG_LEVEL: INFO
+          REGIONS_TO_SCAN: !Join [",", !Ref pRegionsToScan]
+      Role: !GetAtt LambdaRoleListAWSOrgAccounts.Arn
+
+  LambdaRoleListAWSOrgAccounts:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "Serverlesss implementation. Does not require to be deployed in a VPC."
+    Properties:
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Path: /kms-insights/
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - "sts:AssumeRole"
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+      Policies:
+        - PolicyName: "AllowListOrgAccounts"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "organizations:Describe"
+                  - "organizations:List*"
+                Resource:
+                  - "*"
+
+  rListOrgAccountsLambdaLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      RetentionInDays: !Ref pLogsRetentionInDays
+      LogGroupName: !Sub "/aws/lambda/${rListOrgAccountsLambda}"
+      KmsKeyId: !GetAtt KMSKey.Arn
+
+#################################################################################
+#   AWS Lambda function rGetKMSdataLambda resources                     #
+#################################################################################
+  rGetKMSdataLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: generate-kms-insights.handler
+      CodeUri: ./lambda/generate-kms-insights/
+      Runtime: python3.12
+      Architectures:
+        - arm64
+      MemorySize: 1024
+      Timeout: 900
+      Description: Lambda function to get KMS insights data from AWS accounts
+      Environment:
+        Variables:
+          S3_BUCKET: !Sub '${pS3BucketPrefix}-data-${AWS::AccountId}-${AWS::Region}'
+          # TODO: Pass KMS_READ_ROLE as paramater
+          KMS_READ_ROLE: XA-KMSRead-Role
+          # TODO: Pass LOG_LEVEL as paramater
+          LOG_LEVEL: INFO
+      Role: !GetAtt LambdaRoleListGetKMSdata.Arn
+
+  LambdaRoleListGetKMSdata:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "Serverlesss implementation. Does not require to be deployed in a VPC."
+    Properties:
+      RoleName: kms-insights-LambdaRoleListGetKMSdata
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Path: /kms-insights/
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - "sts:AssumeRole"
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+
+  LambdaRoleListGetKMSdataPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: "KMSInsightsDataAccess"
+      Roles: 
+        - !Ref LambdaRoleListGetKMSdata
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Action: 
+            - "sts:AssumeRole"
+            Resource:
+            - !Sub "arn:aws:iam::*:role/${pCrossAccountIAMReadKMSRoleName}"
+          - Effect: "Allow"
+            Action:
+              - "kms:Decrypt"
+              - "kms:DescribeKey"
+              - "kms:GenerateDataKey"
+            Resource: !GetAtt KMSKey.Arn
+          - Effect: "Allow"
+            Action:
+              - "s3:PutObject"
+            Resource:
+              - !Sub "arn:${AWS::Partition}:s3:::${pS3BucketPrefix}-data-${AWS::AccountId}-${AWS::Region}/*"
+              - !Sub "arn:${AWS::Partition}:s3:::${pS3BucketPrefix}-data-${AWS::AccountId}-${AWS::Region}"
+
+  rGetKMSdataLambdaLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      RetentionInDays: !Ref pLogsRetentionInDays
+      LogGroupName: !Sub "/aws/lambda/${rGetKMSdataLambda}"
+      KmsKeyId: !GetAtt KMSKey.Arn
+
+  rQuickSightDataSourceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aws-quicksight-data-source-role
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: quicksight.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+  #################
+  #   AWS KMS     #
+  #################
+  KMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      EnableKeyRotation: true
+      PendingWindowInDays: 20
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: key-default-policy
+        Statement:
+          - Sid: Enable IAM Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action:
+              - kms:Update*
+              - kms:UntagResource
+              - kms:TagResource
+              - kms:ScheduleKeyDeletion
+              - kms:Revoke*
+              - kms:Put*
+              - kms:List*
+              - kms:Get*
+              - kms:Enable*
+              - kms:Disable*
+              - kms:Describe*
+              - kms:Delete*
+              - kms:Create*
+              - kms:CancelKeyDeletion
+            Resource: "*"
+          - Sid: Allow to view key
+            Effect: Allow
+            Principal:
+                AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action:
+              - kms:ListResourceTags
+              - kms:GetKeyRotationStatus
+              - kms:GetKeyPolicy
+              - kms:DescribeKey
+            Resource: "*"
+          - Sid: Allow to read data
+            Effect: Allow
+            Principal:
+                AWS: !GetAtt rQuickSightDataSourceRole.Arn
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey
+            Resource: "*"
+          - Sid: Allow to write data
+            Effect: Allow
+            Principal:
+                AWS: !GetAtt LambdaRoleListGetKMSdata.Arn
+            Action:
+              - kms:Encrypt
+              - kms:GenerateDataKey
+            Resource: "*"
+          - Sid: Enable Log groups encryption.
+            Effect: Allow
+            Principal:
+              Service: !Sub "logs.${AWS::Region}.amazonaws.com"
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey
+              - kms:DescribeKey
+            Resource: "*"
+            Condition:
+              ArnLike:
+                kms:EncryptionContext:aws:logs:arn: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*"
+  KMSKeyAlias:
+    Type: "AWS::KMS::Alias"
+    Properties:
+      AliasName: alias/kms-insights-key
+      TargetKeyId: !Ref KMSKey
+
+
+  ########################################
+  #  Amazon S3 bucket to store findings  #
+  ########################################
+  s3Bucket:
+    Type: AWS::S3::Bucket
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W51
+            reason: "Access intended only within the same account"
+    Properties:
+      BucketName: !Sub '${pS3BucketPrefix}-data-${AWS::AccountId}-${AWS::Region}'
+      AccessControl: Private
+      VersioningConfiguration:
+        Status: Enabled
+      LoggingConfiguration:
+        DestinationBucketName: !Ref LoggingBucket
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !GetAtt KMSKey.Arn
+            BucketKeyEnabled: true
+      LifecycleConfiguration:
+        Rules:
+          - Status: Enabled
+            ExpirationInDays: 365
+  s3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref s3Bucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Require Secure Transport
+            Action: "s3:*"
+            Effect: Deny
+            Resource:
+              - !Sub "arn:${AWS::Partition}:s3:::${s3Bucket}"
+              - !Sub "arn:${AWS::Partition}:s3:::${s3Bucket}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
+            Principal: "*"
+  LoggingBucket:
+    Type: "AWS::S3::Bucket"
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W51
+            reason: "Access intended only within the same account"
+          - id: W35
+            reason: "This is a S3 bucket to store kms insights data logs from S3 bucket."
+    Properties:
+      BucketName: !Sub "${pS3BucketPrefix}-log-bucket-${AWS::AccountId}-${AWS::Region}"
+      AccessControl: LogDeliveryWrite
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !GetAtt KMSKey.Arn
+            BucketKeyEnabled: true
+      LifecycleConfiguration:
+        Rules:
+          - Status: Enabled
+            ExpirationInDays: 365
+  LoggingBucketBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LoggingBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Require Secure Transport
+            Action: "s3:*"
+            Effect: Deny
+            Resource:
+              - !Sub "arn:${AWS::Partition}:s3:::${LoggingBucket}"
+              - !Sub "arn:${AWS::Partition}:s3:::${LoggingBucket}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
+            Principal: "*"
+
+Outputs:
+  S3LogBucketName:
+    Value: !Ref LoggingBucket
+    Description: S3 bucket name for S3 access logs

@@ -1,0 +1,76 @@
+{
+  "Comment": "A description of my state machine",
+  "StartAt": "Lambda Invoke - Gen Account List",
+  "States": {
+    "Lambda Invoke - Gen Account List": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "OutputPath": "$.Payload",
+      "Parameters": {
+        "Payload.$": "$",
+        "FunctionName": "${rListOrgAccountsLambda}:$LATEST"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 6,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "Map - Accounts"
+    },
+    "Map - Accounts": {
+      "Type": "Map",
+      "Iterator": {
+        "StartAt": "Lambda Invoke - Gen Report",
+        "States": {
+          "Lambda Invoke - Gen Report": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "OutputPath": "$.Payload",
+            "Parameters": {
+              "Payload.$": "$",
+              "FunctionName": "${rGetKMSdataLambda}:$LATEST"
+            },
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException"
+                ],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 6,
+                "BackoffRate": 2
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
+                "Next": "Error - execution failed!"
+              }
+            ],
+            "Next": "Success - pass to end!"
+          },
+          "Error - execution failed!": {
+            "Type": "Pass",
+            "End": true
+          },
+          "Success - pass to end!": {
+            "Type": "Pass",
+            "End": true
+          }
+        }
+      },
+      "MaxConcurrency": 10,
+      "End": true
+    }
+  }
+}

@@ -1,0 +1,1845 @@
+####################################################################
+##  Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+##  SPDX-License-Identifier: MIT-0
+####################################################################
+
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  This template is used to deploy the analytics components of the
+  KMS Insights tool to your account.
+
+  This template will deploy the following resources:
+    Athena Tables
+    Athena View
+    Athena Workgroup
+    IAM Roles
+    Quicksight DataSet
+    Quicksight Analytics
+    Quicksight Dashboard
+
+###############################################################################
+Parameters:
+
+  ##  The prefix of the s3 bucket, new or existing
+  pS3BucketPrefix:
+    Type: String
+    Description: The prefix of the S3 bucket to store the Athena query and S3 access log data.
+    Default: kms-insights
+
+  pS3BucketLogBucketName:
+    Type: String
+    Description: S3 bucket name for S3 access logs
+
+  pQuickSightUserNameArn:
+    Description: Enter the arn of the QuickSight Username.
+    Type: String
+
+Resources:
+  ###########################
+  #   AWS Glue resources    #
+  ###########################
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Sub "kms_insights_database"
+  GlueTableKMSKeys:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: !Sub "kms_keys_table"
+        Owner: owner
+        Retention: 0
+        StorageDescriptor:
+          Location: !Sub 's3://${pS3BucketPrefix}-data-${AWS::AccountId}-${AWS::Region}/kms/key_data/'
+          Columns:
+            - Name: date
+              Type: string
+            - Name: accountnumber
+              Type: string
+            - Name: accountname
+              Type: string
+            - Name: region
+              Type: string
+            - Name: keyid
+              Type: string
+            - Name: alias
+              Type: string
+            - Name: sid
+              Type: string
+            - Name: effect
+              Type: string
+            - Name: principal
+              Type: string
+            - Name: principalservice
+              Type: string
+            - Name: action
+              Type: string
+            - Name: condition
+              Type: string
+            - Name: concern
+              Type: string
+            - Name: resource
+              Type: string
+            - Name: tags
+              Type: string
+            - Name: creationdate
+              Type: string
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.openx.data.jsonserde.JsonSerDe
+          Compressed: false
+          NumberOfBuckets: -1
+          BucketColumns: []
+          SortColumns: []
+          StoredAsSubDirectories: false
+        Parameters:
+          projection.enabled: true
+          projection.date.type: "date"
+          projection.date.range: "2022/01/01,NOW"
+          projection.date.format: "yyyy/MM/dd"
+          projection.date.interval: "1"
+          projection.date.interval.unit: "DAYS"
+          storage.location.template: !Sub "s3://${pS3BucketPrefix}-data-${AWS::AccountId}-${AWS::Region}/kms/key_data/${!date}/"
+          classification: json
+          compressionType: gzip
+          typeOfData: file
+        TableType: EXTERNAL_TABLE
+  GlueTableKMSLastUsed:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: !Sub "kms_key_last_used_table"
+        Owner: owner
+        Retention: 0
+        StorageDescriptor:
+          Location: !Sub 's3://${pS3BucketPrefix}-data-${AWS::AccountId}-${AWS::Region}/kms/key_last_used/latest/'
+          Columns:
+            - Name: keyid
+              Type: string
+            - Name: eventtime
+              Type: string
+            - Name: username
+              Type: string
+            - Name: eventname
+              Type: string
+            - Name: encryptioncontext
+              Type: string
+            - Name: eventsource
+              Type: string
+            - Name: useridentitytype
+              Type: string
+            - Name: sourceipaddress
+              Type: string
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.openx.data.jsonserde.JsonSerDe
+          Compressed: false
+          NumberOfBuckets: -1
+          BucketColumns: []
+          SortColumns: []
+          StoredAsSubDirectories: false
+        Parameters:
+          classification: json
+          compressionType: gzip
+          typeOfData: file
+        TableType: EXTERNAL_TABLE
+  GlueKMSInsightsTable:
+    Type: "AWS::Glue::Table"
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Description: Athena View Table for KMS Insights data
+        Name: view_kms_insights_data
+        Parameters:
+          presto_view: "true"
+          comment: Presto View
+        PartitionKeys: []
+        StorageDescriptor:
+          Columns:
+            - Name: "date"
+              Type: string
+            - Name: "accountnumber"
+              Type: string
+            - Name: "accountname"
+              Type: string
+            - Name: "region"
+              Type: string
+            - Name: "keyid"
+              Type: string
+            - Name: "alias"
+              Type: string
+            - Name: "sid"
+              Type: string
+            - Name: "effect"
+              Type: string
+            - Name: "principal"
+              Type: string
+            - Name: "principalservice"
+              Type: string
+            - Name: "action"
+              Type: string
+            - Name: "condition"
+              Type: string
+            - Name: "concern"
+              Type: string
+            - Name: "resource"
+              Type: string
+            - Name: "tags"
+              Type: string
+            - Name: "creationdate"
+              Type: string
+            - Name: "eventtime"
+              Type: string
+            - Name: "username"
+              Type: string
+            - Name: "eventname"
+              Type: string
+            - Name: "encryptioncontext"
+              Type: string
+            - Name: "eventsource"
+              Type: string
+            - Name: "useridentitytype"
+              Type: string
+            - Name: "sourceipaddress"
+              Type: string
+          InputFormat: ""
+          Location: ""
+          NumberOfBuckets: 0
+          OutputFormat: ""
+          SerdeInfo: {}
+        TableType: VIRTUAL_VIEW
+        ViewExpandedText: /* Presto View */
+        ViewOriginalText: !Join
+          - ""
+          - - "/* Presto View: "
+            - !Base64 >-
+              {"originalSql":"SELECT\n  kms_keys.date\n, kms_keys.accountnumber\n, kms_keys.accountname\n, kms_keys.region\n, kms_keys.keyid\n, kms_keys.alias\n, kms_keys.sid\n, kms_keys.effect\n, kms_keys.principal\n, kms_keys.principalservice\n, kms_keys.action\n, kms_keys.condition\n, kms_keys.concern\n, kms_keys.resource\n, kms_keys.tags\n, kms_keys.creationdate\n, last_used.eventtime\n, last_used.username\n, last_used.eventname\n, last_used.encryptioncontext\n, last_used.eventsource\n, last_used.useridentitytype\n, last_used.sourceipaddress\nFROM\n  (\"kms_insights_database\".\"kms_keys_table\" kms_keys\nLEFT JOIN \"kms_insights_database\".\"kms_key_last_used_table\" last_used ON (kms_keys.keyid = last_used.keyid))\n","catalog":"awsdatacatalog","schema":"kms_insights_database","columns":[{"name":"date","type":"varchar"},{"name":"accountnumber","type":"varchar"},{"name":"accountname","type":"varchar"},{"name":"region","type":"varchar"},{"name":"keyid","type":"varchar"},{"name":"alias","type":"varchar"},{"name":"sid","type":"varchar"},{"name":"effect","type":"varchar"},{"name":"principal","type":"varchar"},{"name":"principalservice","type":"varchar"},{"name":"action","type":"varchar"},{"name":"condition","type":"varchar"},{"name":"concern","type":"varchar"},{"name":"resource","type":"varchar"},{"name":"tags","type":"varchar"},{"name":"creationdate","type":"varchar"},{"name":"eventtime","type":"varchar"},{"name":"username","type":"varchar"},{"name":"eventname","type":"varchar"},{"name":"encryptioncontext","type":"varchar"},{"name":"eventsource","type":"varchar"},{"name":"useridentitytype","type":"varchar"},{"name":"sourceipaddress","type":"varchar"}]}
+            - " */"
+  AthenaWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties: 
+      Description: Athena WorkGroup for KMSDashboard
+      Name: !Sub 'kms_insights_athena_workgroup'
+      RecursiveDeleteOption: True
+      State: ENABLED
+      WorkGroupConfiguration: 
+        EnforceWorkGroupConfiguration: True
+        PublishCloudWatchMetricsEnabled: True
+        RequesterPaysEnabled: False
+        EngineVersion: 
+          SelectedEngineVersion: "Athena engine version 3"
+        ResultConfiguration: 
+          OutputLocation: !Join ['', ['s3://', !Ref 'S3BucketAthenaWorkGroup', '/athena-results/']]
+          EncryptionConfiguration:
+            EncryptionOption: SSE_S3
+  
+  S3BucketAthenaWorkGroup:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${pS3BucketPrefix}-athena-query-${AWS::AccountId}-${AWS::Region}"
+      LoggingConfiguration:
+        DestinationBucketName: !Ref pS3BucketLogBucketName
+      AccessControl: Private
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls       : True
+        BlockPublicPolicy     : True
+        IgnorePublicAcls      : True
+        RestrictPublicBuckets : True
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      LifecycleConfiguration:
+        Rules:
+          - Status: Enabled
+            ExpirationInDays: 365
+
+  S3BucketPolicyAthenaWorkGroup:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F16
+            reason: "Wildcard allowed by restricted with Conditions to reduce risk"
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3BucketAthenaWorkGroup
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Require Secure Transport
+            Action: "s3:*"
+            Effect: Deny
+            Resource:
+              - !Sub "arn:${AWS::Partition}:s3:::${S3BucketAthenaWorkGroup}"
+              - !Sub "arn:${AWS::Partition}:s3:::${S3BucketAthenaWorkGroup}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
+            Principal: "*"
+
+
+  ###################################
+  #    Amazon Quicksight DataSource    #
+  ###################################
+
+  KMSInsightsDataSource:
+    Type: AWS::QuickSight::DataSource
+    Properties:
+      DataSourceId: !Sub "kms-insights-data-source-${AWS::AccountId}"
+      Name: "kms-insights-data-source"
+      AwsAccountId: !Ref AWS::AccountId
+      Type: ATHENA
+      DataSourceParameters:
+        AthenaParameters:
+          WorkGroup: !Ref AthenaWorkGroup
+          RoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/aws-quicksight-data-source-role"
+      Permissions:
+        - Actions:
+            - "quicksight:PassDataSource"
+            - "quicksight:DescribeDataSourcePermissions"
+            - "quicksight:UpdateDataSource"
+            - "quicksight:UpdateDataSourcePermissions"
+            - "quicksight:DescribeDataSource"
+            - "quicksight:DeleteDataSource"
+          Principal: !Ref pQuickSightUserNameArn
+      SslProperties:
+        DisableSsl: false
+
+  ###################################
+  #    Amazon Quicksight DataSet    #
+  ###################################
+  KMSDashboardDataSet:
+    Type: AWS::QuickSight::DataSet
+    Properties:
+      Permissions:
+        - Actions:
+            - "quicksight:UpdateDataSetPermissions"
+            - "quicksight:DescribeDataSet"
+            - "quicksight:DescribeDataSetPermissions"
+            - "quicksight:PassDataSet"
+            - "quicksight:DescribeIngestion"
+            - "quicksight:ListIngestions"
+            - "quicksight:UpdateDataSet"
+            - "quicksight:DeleteDataSet"
+            - "quicksight:CreateIngestion"
+            - "quicksight:CancelIngestion"
+          Principal: !Ref pQuickSightUserNameArn
+      Name: "kms-insights-data-set"
+      DataSetId: !Sub "kms-insights-data-set-${AWS::AccountId}"
+      AwsAccountId: !Ref AWS::AccountId
+      PhysicalTableMap:
+        KMSDashboardTable:
+          RelationalTable:
+            Name: !Ref GlueKMSInsightsTable
+            Catalog: AwsDataCatalog
+            Schema: !Ref GlueDatabase
+            DataSourceArn: !GetAtt KMSInsightsDataSource.Arn
+            InputColumns:
+              - Name: date
+                Type: STRING
+              - Name: accountnumber
+                Type: STRING
+              - Name: accountname
+                Type: STRING
+              - Name: region
+                Type: STRING
+              - Name: keyid
+                Type: STRING
+              - Name: alias
+                Type: STRING
+              - Name: sid
+                Type: STRING
+              - Name: effect
+                Type: STRING
+              - Name: principal
+                Type: STRING
+              - Name: principalservice
+                Type: STRING
+              - Name: action
+                Type: STRING
+              - Name: condition
+                Type: STRING
+              - Name: concern
+                Type: STRING
+              - Name: resource
+                Type: STRING
+              - Name: tags
+                Type: STRING
+              - Name: creationdate
+                Type: STRING
+              - Name: eventtime
+                Type: STRING
+              - Name: username
+                Type: STRING
+              - Name: eventname
+                Type: STRING
+              - Name: encryptioncontext
+                Type: STRING
+              - Name: eventsource
+                Type: STRING
+              - Name: useridentitytype
+                Type: STRING
+              - Name: sourceipaddress
+                Type: STRING
+      LogicalTableMap:
+        KMSDashboardLogicalTable:
+          Alias: !Sub "kms_insights_logic_table"
+          DataTransforms:
+            - CastColumnTypeOperation:
+                ColumnName: "date"
+                NewColumnType: DATETIME
+                Format: "yyyy-MM-dd"
+            - ProjectOperation:
+                ProjectedColumns:
+                  - "date"
+                  - "accountnumber"
+                  - "accountname"
+                  - "region"
+                  - "keyid"
+                  - "alias"
+                  - "sid"
+                  - "effect"
+                  - "principal"
+                  - "principalservice"
+                  - "action"
+                  - "condition"
+                  - "concern"
+                  - "resource"
+                  - "tags"
+                  - "creationdate"
+                  - "eventtime"
+                  - "username"
+                  - "eventname"
+                  - "encryptioncontext"
+                  - "eventsource"
+                  - "useridentitytype"
+                  - "sourceipaddress"
+          Source:
+            PhysicalTableId: KMSDashboardTable
+      ImportMode: DIRECT_QUERY
+
+  ###################################
+  #   Amazon Quicksight Analysis    # 
+  ###################################
+  QuicksightAnalysisTemplate:
+    Type: AWS::QuickSight::Analysis
+    Properties:
+      AnalysisId: kms_insights_analysis
+      Name: Data Protection Insights
+      AwsAccountId: !Sub ${AWS::AccountId}
+      Permissions:
+        - Actions:
+            - "quicksight:RestoreAnalysis"
+            - "quicksight:UpdateAnalysisPermissions"
+            - "quicksight:DeleteAnalysis"
+            - "quicksight:DescribeAnalysisPermissions"
+            - "quicksight:QueryAnalysis"
+            - "quicksight:DescribeAnalysis"
+            - "quicksight:UpdateAnalysis"
+          Principal: !Ref pQuickSightUserNameArn
+      Definition:
+        AnalysisDefaults:
+          DefaultNewSheetConfiguration:
+            InteractiveLayoutConfiguration:
+              Grid:
+                CanvasSizeOptions:
+                  ScreenCanvasSizeOptions:
+                    OptimizedViewPortWidth: 1600px
+                    ResizeOption: FIXED
+            SheetContentType: INTERACTIVE
+        CalculatedFields:
+          - DataSetIdentifier: kmsdashboardtable
+            Expression: distinct_countIf(keyid,startsWith(alias,'alias/aws/'))
+            Name: aws_managed_key
+          - DataSetIdentifier: kmsdashboardtable
+            Expression: distinct_count(keyid)
+            Name: distinct_count_keys
+          - DataSetIdentifier: kmsdashboardtable
+            Expression: distinct_count(region)
+            Name: distinct_count_region
+          - DataSetIdentifier: kmsdashboardtable
+            Expression: ifelse(startsWith(alias,'alias/aws/'),'AWS managed Key', 'Customer managed Key')
+            Name: kms_cmk_boolean
+          - DataSetIdentifier: kmsdashboardtable
+            Expression: distinct_countIf(keyid,NOT(startsWith(alias,'alias/aws/')))
+            Name: not_aws_managed
+          - DataSetIdentifier: kmsdashboardtable
+            Expression: count(accountname)
+            Name: total_items
+        DataSetIdentifierDeclarations:
+          - DataSetArn: !GetAtt KMSDashboardDataSet.Arn
+            Identifier: kmsdashboardtable
+        FilterGroups:
+          - CrossDataset: ALL_DATASETS
+            FilterGroupId: ad4bbf87-aeb6-49aa-8efa-c59e25c13a3a
+            Filters:
+              - CategoryFilter:
+                  Column:
+                    ColumnName: accountnumber
+                    DataSetIdentifier: kmsdashboardtable
+                  Configuration:
+                    FilterListConfiguration:
+                      MatchOperator: CONTAINS
+                      NullOption: NON_NULLS_ONLY
+                      SelectAllOptions: FILTER_ALL_VALUES
+                  DefaultFilterControlConfiguration:
+                    ControlOptions:
+                      DefaultDropdownOptions:
+                        DisplayOptions:
+                          SelectAllOptions:
+                            Visibility: VISIBLE
+                          TitleOptions:
+                            FontConfiguration:
+                              FontSize:
+                                Relative: MEDIUM
+                            Visibility: VISIBLE
+                        Type: MULTI_SELECT
+                    Title: Account Number
+                  FilterId: ff75ae18-7d8c-4d8f-b8d9-9d19b260a8fd
+            ScopeConfiguration:
+              AllSheets: {}
+            Status: ENABLED
+          - CrossDataset: ALL_DATASETS
+            FilterGroupId: 4da3cb06-135f-44cd-9fdb-8a957bb348dd
+            Filters:
+              - CategoryFilter:
+                  Column:
+                    ColumnName: alias
+                    DataSetIdentifier: kmsdashboardtable
+                  Configuration:
+                    FilterListConfiguration:
+                      MatchOperator: CONTAINS
+                      NullOption: NON_NULLS_ONLY
+                      SelectAllOptions: FILTER_ALL_VALUES
+                  DefaultFilterControlConfiguration:
+                    ControlOptions:
+                      DefaultDropdownOptions:
+                        DisplayOptions:
+                          SelectAllOptions:
+                            Visibility: VISIBLE
+                          TitleOptions:
+                            FontConfiguration:
+                              FontSize:
+                                Relative: MEDIUM
+                            Visibility: VISIBLE
+                        Type: MULTI_SELECT
+                    Title: Key Alias
+                  FilterId: 3bffef65-0528-4960-ba04-f0acdb32f142
+            ScopeConfiguration:
+              AllSheets: {}
+            Status: ENABLED
+          - CrossDataset: ALL_DATASETS
+            FilterGroupId: 13b499e5-210a-4fba-9fa9-dbe2daf3d27a
+            Filters:
+              - CategoryFilter:
+                  Column:
+                    ColumnName: region
+                    DataSetIdentifier: kmsdashboardtable
+                  Configuration:
+                    FilterListConfiguration:
+                      MatchOperator: CONTAINS
+                      NullOption: NON_NULLS_ONLY
+                      SelectAllOptions: FILTER_ALL_VALUES
+                  DefaultFilterControlConfiguration:
+                    ControlOptions:
+                      DefaultDropdownOptions:
+                        DisplayOptions:
+                          SelectAllOptions:
+                            Visibility: VISIBLE
+                          TitleOptions:
+                            FontConfiguration:
+                              FontSize:
+                                Relative: MEDIUM
+                            Visibility: VISIBLE
+                        Type: MULTI_SELECT
+                    Title: Region
+                  FilterId: 1ec4b711-dbf6-4599-bf7f-2816fc26f7fb
+            ScopeConfiguration:
+              AllSheets: {}
+            Status: ENABLED
+          - CrossDataset: ALL_DATASETS
+            FilterGroupId: 450a3ddb-755c-4a93-9297-c445a26598e8
+            Filters:
+              - CategoryFilter:
+                  Column:
+                    ColumnName: kms_cmk_boolean
+                    DataSetIdentifier: kmsdashboardtable
+                  Configuration:
+                    FilterListConfiguration:
+                      MatchOperator: CONTAINS
+                      NullOption: NON_NULLS_ONLY
+                      SelectAllOptions: FILTER_ALL_VALUES
+                  DefaultFilterControlConfiguration:
+                    ControlOptions:
+                      DefaultDropdownOptions:
+                        DisplayOptions:
+                          SelectAllOptions:
+                            Visibility: VISIBLE
+                          TitleOptions:
+                            FontConfiguration:
+                              FontSize:
+                                Relative: MEDIUM
+                            Visibility: VISIBLE
+                        Type: MULTI_SELECT
+                    Title: Key Type
+                  FilterId: 140f0906-1289-4f48-a4be-613da3e05a2c
+            ScopeConfiguration:
+              AllSheets: {}
+            Status: ENABLED
+          - CrossDataset: SINGLE_DATASET
+            FilterGroupId: 0aeed4e7-9111-4ab3-a95f-0ad991797db0
+            Filters:
+              - CategoryFilter:
+                  Column:
+                    ColumnName: accountname
+                    DataSetIdentifier: kmsdashboardtable
+                  Configuration:
+                    FilterListConfiguration:
+                      MatchOperator: CONTAINS
+                      NullOption: NON_NULLS_ONLY
+                      SelectAllOptions: FILTER_ALL_VALUES
+                  DefaultFilterControlConfiguration:
+                    ControlOptions:
+                      DefaultDropdownOptions:
+                        DisplayOptions:
+                          SelectAllOptions:
+                            Visibility: VISIBLE
+                          TitleOptions:
+                            FontConfiguration:
+                              FontSize:
+                                Relative: MEDIUM
+                            Visibility: VISIBLE
+                        Type: MULTI_SELECT
+                    Title: Account Name
+                  FilterId: 99cf90d9-4678-4c23-8bf4-06a844281604
+            ScopeConfiguration:
+              AllSheets: {}
+            Status: ENABLED
+          - CrossDataset: ALL_DATASETS
+            FilterGroupId: 225584aa-89d2-48d0-a670-45ba5624b5f6
+            Filters:
+              - CategoryFilter:
+                  Column:
+                    ColumnName: concern
+                    DataSetIdentifier: kmsdashboardtable
+                  Configuration:
+                    FilterListConfiguration:
+                      MatchOperator: CONTAINS
+                      NullOption: NON_NULLS_ONLY
+                      SelectAllOptions: FILTER_ALL_VALUES
+                  DefaultFilterControlConfiguration:
+                    ControlOptions:
+                      DefaultDropdownOptions:
+                        DisplayOptions:
+                          SelectAllOptions:
+                            Visibility: VISIBLE
+                          TitleOptions:
+                            FontConfiguration:
+                              FontSize:
+                                Relative: MEDIUM
+                            Visibility: VISIBLE
+                        Type: MULTI_SELECT
+                    Title: Concerns
+                  FilterId: 24788e47-54c6-4156-8580-175c137f8d2f
+            ScopeConfiguration:
+              AllSheets: {}
+            Status: ENABLED
+          - CrossDataset: ALL_DATASETS
+            FilterGroupId: 0425033a-ccf9-466a-acb3-cddf36abd9e3
+            Filters:
+              - CategoryFilter:
+                  Column:
+                    ColumnName: keyid
+                    DataSetIdentifier: kmsdashboardtable
+                  Configuration:
+                    FilterListConfiguration:
+                      MatchOperator: CONTAINS
+                      NullOption: NON_NULLS_ONLY
+                      SelectAllOptions: FILTER_ALL_VALUES
+                  DefaultFilterControlConfiguration:
+                    ControlOptions:
+                      DefaultDropdownOptions:
+                        DisplayOptions:
+                          SelectAllOptions:
+                            Visibility: VISIBLE
+                          TitleOptions:
+                            FontConfiguration:
+                              FontSize:
+                                Relative: MEDIUM
+                            Visibility: VISIBLE
+                        Type: MULTI_SELECT
+                    Title: KeyID
+                  FilterId: 7843e313-d2eb-41b6-a583-0072d7de6934
+            ScopeConfiguration:
+              AllSheets: {}
+            Status: ENABLED
+        Options:
+          WeekStart: SUNDAY
+        ParameterDeclarations: []
+        Sheets:
+          - ContentType: INTERACTIVE
+            FilterControls:
+              - CrossSheet:
+                  FilterControlId: aa8d2837-3eb3-4af9-838d-f12d4bad64cf
+                  SourceFilterId: 3bffef65-0528-4960-ba04-f0acdb32f142
+              - CrossSheet:
+                  FilterControlId: 6dead55a-d323-4932-9217-691891a76a07
+                  SourceFilterId: 1ec4b711-dbf6-4599-bf7f-2816fc26f7fb
+              - CrossSheet:
+                  FilterControlId: d0155d89-8d5b-49dd-b9d0-cd8e1ccc9f36
+                  SourceFilterId: 140f0906-1289-4f48-a4be-613da3e05a2c
+              - CrossSheet:
+                  FilterControlId: 7347b2f8-0645-4565-a6e1-b1142b0c6ad0
+                  SourceFilterId: 99cf90d9-4678-4c23-8bf4-06a844281604
+              - CrossSheet:
+                  FilterControlId: 756b9501-bd6c-4cd2-a151-77d3d121982c
+                  SourceFilterId: ff75ae18-7d8c-4d8f-b8d9-9d19b260a8fd
+              - CrossSheet:
+                  FilterControlId: f85893f8-9b4b-4fde-82fa-037d2265fcff
+                  SourceFilterId: 24788e47-54c6-4156-8580-175c137f8d2f
+              - CrossSheet:
+                  FilterControlId: afb4a65b-32de-4a1a-ac8e-23a1be677294
+                  SourceFilterId: 7843e313-d2eb-41b6-a583-0072d7de6934
+            Layouts:
+              - Configuration:
+                  GridLayout:
+                    Elements:
+                      - ColumnIndex: 0
+                        ColumnSpan: 6
+                        ElementId: 196ab707-6745-47ca-b2b4-42e7745f6f73
+                        ElementType: VISUAL
+                        RowIndex: 0
+                        RowSpan: 3
+                      - ColumnIndex: 6
+                        ColumnSpan: 5
+                        ElementId: 4b159e8e-194d-42fd-86b4-5575b6de554c
+                        ElementType: VISUAL
+                        RowIndex: 0
+                        RowSpan: 3
+                      - ColumnIndex: 11
+                        ColumnSpan: 5
+                        ElementId: 36c1348c-9fd4-470f-bc4f-5ba79a89ffd5
+                        ElementType: VISUAL
+                        RowIndex: 0
+                        RowSpan: 3
+                      - ColumnIndex: 16
+                        ColumnSpan: 5
+                        ElementId: c8e8112a-872a-4b90-a1c4-5ab70ae6749e
+                        ElementType: VISUAL
+                        RowIndex: 0
+                        RowSpan: 3
+                      - ColumnIndex: 21
+                        ColumnSpan: 5
+                        ElementId: 1e8d6107-ed35-4b94-a9b5-fc58fd54b55c
+                        ElementType: VISUAL
+                        RowIndex: 0
+                        RowSpan: 3
+                      - ColumnIndex: 26
+                        ColumnSpan: 5
+                        ElementId: 00734a55-527f-474a-9c5b-225600501790
+                        ElementType: VISUAL
+                        RowIndex: 0
+                        RowSpan: 3
+                      - ColumnIndex: 31
+                        ColumnSpan: 5
+                        ElementId: 0b49ee01-ada8-46e5-bb66-fb0da65f77a3
+                        ElementType: VISUAL
+                        RowIndex: 0
+                        RowSpan: 3
+                      - ColumnIndex: 0
+                        ColumnSpan: 8
+                        ElementId: c7302eb1-a1b9-4fee-bacb-81c12f791810
+                        ElementType: VISUAL
+                        RowIndex: 3
+                        RowSpan: 5
+                      - ColumnIndex: 8
+                        ColumnSpan: 9
+                        ElementId: 6ed6eb21-16c4-40a9-a9ef-d72999c777b7
+                        ElementType: VISUAL
+                        RowIndex: 3
+                        RowSpan: 5
+                      - ColumnIndex: 17
+                        ColumnSpan: 10
+                        ElementId: fcfe9dda-81cb-47aa-9c14-b0a960e0be96
+                        ElementType: VISUAL
+                        RowIndex: 3
+                        RowSpan: 5
+                      - ColumnIndex: 27
+                        ColumnSpan: 9
+                        ElementId: 633c4355-1efa-4843-a1c4-6769fc1910cc
+                        ElementType: VISUAL
+                        RowIndex: 3
+                        RowSpan: 5
+                      - ColumnIndex: 0
+                        ColumnSpan: 11
+                        ElementId: dd3f2a34-c1f5-43cc-9b2a-f149a89a06f4
+                        ElementType: VISUAL
+                        RowIndex: 8
+                        RowSpan: 9
+                      - ColumnIndex: 11
+                        ColumnSpan: 25
+                        ElementId: ec7956f1-8443-4994-a1b0-dec9b3009b21
+                        ElementType: VISUAL
+                        RowIndex: 8
+                        RowSpan: 9
+                      - ColumnIndex: 0
+                        ColumnSpan: 36
+                        ElementId: d20b7bfb-efec-4fa0-ae2a-979f0e7e5042
+                        ElementType: VISUAL
+                        RowIndex: 17
+                        RowSpan: 12
+                      - ColumnIndex: 0
+                        ColumnSpan: 36
+                        ElementId: 54ea964d-b16f-454e-be09-80152bed0662
+                        ElementType: VISUAL
+                        RowIndex: 29
+                        RowSpan: 21
+            Name: KMS dashboard
+            SheetControlLayouts:
+              - Configuration:
+                  GridLayout:
+                    Elements:
+                      - ColumnIndex: 0
+                        ColumnSpan: 2
+                        ElementId: aa8d2837-3eb3-4af9-838d-f12d4bad64cf
+                        ElementType: FILTER_CONTROL
+                        RowIndex: 0
+                        RowSpan: 1
+                      - ColumnIndex: 2
+                        ColumnSpan: 2
+                        ElementId: afb4a65b-32de-4a1a-ac8e-23a1be677294
+                        ElementType: FILTER_CONTROL
+                        RowIndex: 0
+                        RowSpan: 1
+                      - ColumnIndex: 4
+                        ColumnSpan: 2
+                        ElementId: 6dead55a-d323-4932-9217-691891a76a07
+                        ElementType: FILTER_CONTROL
+                        RowIndex: 0
+                        RowSpan: 1
+                      - ColumnIndex: 6
+                        ColumnSpan: 2
+                        ElementId: d0155d89-8d5b-49dd-b9d0-cd8e1ccc9f36
+                        ElementType: FILTER_CONTROL
+                        RowIndex: 0
+                        RowSpan: 1
+                      - ColumnIndex: 8
+                        ColumnSpan: 2
+                        ElementId: 756b9501-bd6c-4cd2-a151-77d3d121982c
+                        ElementType: FILTER_CONTROL
+                        RowIndex: 0
+                        RowSpan: 1
+                      - ColumnIndex: 10
+                        ColumnSpan: 2
+                        ElementId: 7347b2f8-0645-4565-a6e1-b1142b0c6ad0
+                        ElementType: FILTER_CONTROL
+                        RowIndex: 0
+                        RowSpan: 1
+                      - ColumnIndex: 0
+                        ColumnSpan: 4
+                        ElementId: f85893f8-9b4b-4fde-82fa-037d2265fcff
+                        ElementType: FILTER_CONTROL
+                        RowIndex: 1
+                        RowSpan: 1
+            SheetId: 70ead310-56f3-4b9b-920e-87a2239ffc7e
+            Visuals:
+              - KPIVisual:
+                  Actions:
+                    - ActionOperations:
+                        - FilterOperation:
+                            SelectedFieldsConfiguration:
+                              SelectedFieldOptions: ALL_FIELDS
+                            TargetVisualsConfiguration:
+                              SameSheetTargetVisualConfiguration:
+                                TargetVisualOptions: ALL_VISUALS
+                      CustomActionId: b6cf2fdb-1140-45e0-9819-64aa1994a261
+                      Name: Action 1
+                      Status: ENABLED
+                      Trigger: DATA_POINT_CLICK
+                  ChartConfiguration:
+                    FieldWells:
+                      TargetValues: []
+                      TrendGroups: []
+                      Values:
+                        - NumericalMeasureField:
+                            Column:
+                              ColumnName: total_items
+                              DataSetIdentifier: kmsdashboardtable
+                            FieldId: dc09ed31-c8b3-48ed-a0e2-16ecb5099b49.0.1727701487627
+                    KPIOptions:
+                      Comparison:
+                        ComparisonMethod: PERCENT_DIFFERENCE
+                      PrimaryValueDisplayType: ACTUAL
+                      PrimaryValueFontConfiguration:
+                        FontColor: '#212121'
+                        FontSize:
+                          Relative: LARGE
+                      SecondaryValueFontConfiguration:
+                        FontSize:
+                          Relative: EXTRA_LARGE
+                      Sparkline:
+                        TooltipVisibility: HIDDEN
+                        Type: AREA
+                        Visibility: VISIBLE
+                      VisualLayoutOptions:
+                        StandardLayout:
+                          Type: VERTICAL
+                    SortConfiguration: {}
+                  ColumnHierarchies: []
+                  Subtitle:
+                    Visibility: VISIBLE
+                  Title:
+                    FormatText:
+                      RichText: |-
+                        <visual-title>
+                          <block align="center">
+                            <b>Total # of entries</b>
+                          </block>
+                          <br/>
+                          <block align="center">
+                            <b>(policy statements):</b>
+                          </block>
+                        </visual-title>
+                    Visibility: VISIBLE
+                  VisualId: 4b159e8e-194d-42fd-86b4-5575b6de554c
+              - PieChartVisual:
+                  Actions:
+                    - ActionOperations:
+                        - FilterOperation:
+                            SelectedFieldsConfiguration:
+                              SelectedFieldOptions: ALL_FIELDS
+                            TargetVisualsConfiguration:
+                              SameSheetTargetVisualConfiguration:
+                                TargetVisualOptions: ALL_VISUALS
+                      CustomActionId: f94c1a55-83af-4428-bc17-a6dd17201e86
+                      Name: Action 1
+                      Status: ENABLED
+                      Trigger: DATA_POINT_CLICK
+                  ChartConfiguration:
+                    DataLabels:
+                      Overlap: DISABLE_OVERLAP
+                      Visibility: VISIBLE
+                    DonutOptions:
+                      ArcOptions:
+                        ArcThickness: MEDIUM
+                    FieldWells:
+                      PieChartAggregatedFieldWells:
+                        Category:
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: kms_cmk_boolean
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: af42977d-e7fc-468d-8ad6-26a601e97e91.0.1727701946143
+                        Values:
+                          - NumericalMeasureField:
+                              Column:
+                                ColumnName: distinct_count_keys
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 786d3485-816a-41c7-9e3c-d68658bb219b.1.1727702453152
+                    SortConfiguration:
+                      CategoryItemsLimit:
+                        OtherCategories: INCLUDE
+                      CategorySort:
+                        - FieldSort:
+                            Direction: DESC
+                            FieldId: 786d3485-816a-41c7-9e3c-d68658bb219b.1.1727702453152
+                      SmallMultiplesLimitConfiguration:
+                        OtherCategories: INCLUDE
+                    Tooltip:
+                      FieldBasedTooltip:
+                        AggregationVisibility: HIDDEN
+                        TooltipFields:
+                          - FieldTooltipItem:
+                              FieldId: af42977d-e7fc-468d-8ad6-26a601e97e91.0.1727701946143
+                              Visibility: VISIBLE
+                          - FieldTooltipItem:
+                              FieldId: 786d3485-816a-41c7-9e3c-d68658bb219b.1.1727702453152
+                              Visibility: VISIBLE
+                        TooltipTitleType: PRIMARY_VALUE
+                      SelectedTooltipType: DETAILED
+                      TooltipVisibility: VISIBLE
+                  ColumnHierarchies: []
+                  Subtitle:
+                    Visibility: VISIBLE
+                  Title:
+                    FormatText:
+                      RichText: <visual-title>Type of keys</visual-title>
+                    Visibility: VISIBLE
+                  VisualId: 633c4355-1efa-4843-a1c4-6769fc1910cc
+              - PieChartVisual:
+                  Actions:
+                    - ActionOperations:
+                        - FilterOperation:
+                            SelectedFieldsConfiguration:
+                              SelectedFieldOptions: ALL_FIELDS
+                            TargetVisualsConfiguration:
+                              SameSheetTargetVisualConfiguration:
+                                TargetVisualOptions: ALL_VISUALS
+                      CustomActionId: 2d9f205b-b3d2-429d-8874-f030b26eb41b
+                      Name: Action 1
+                      Status: ENABLED
+                      Trigger: DATA_POINT_CLICK
+                  ChartConfiguration:
+                    DataLabels:
+                      Overlap: DISABLE_OVERLAP
+                      Visibility: VISIBLE
+                    DonutOptions:
+                      ArcOptions:
+                        ArcThickness: MEDIUM
+                    FieldWells:
+                      PieChartAggregatedFieldWells:
+                        Category:
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: region
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.region.0.1727700866323
+                        Values:
+                          - NumericalMeasureField:
+                              Column:
+                                ColumnName: distinct_count_keys
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 786d3485-816a-41c7-9e3c-d68658bb219b.1.1727702553994
+                    SortConfiguration:
+                      CategoryItemsLimit:
+                        OtherCategories: INCLUDE
+                      CategorySort:
+                        - FieldSort:
+                            Direction: DESC
+                            FieldId: 786d3485-816a-41c7-9e3c-d68658bb219b.1.1727702553994
+                      SmallMultiplesLimitConfiguration:
+                        OtherCategories: INCLUDE
+                    Tooltip:
+                      FieldBasedTooltip:
+                        AggregationVisibility: HIDDEN
+                        TooltipFields:
+                          - FieldTooltipItem:
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.region.0.1727700866323
+                              Visibility: VISIBLE
+                          - FieldTooltipItem:
+                              FieldId: 786d3485-816a-41c7-9e3c-d68658bb219b.1.1727702553994
+                              Visibility: VISIBLE
+                        TooltipTitleType: PRIMARY_VALUE
+                      SelectedTooltipType: DETAILED
+                      TooltipVisibility: VISIBLE
+                  ColumnHierarchies: []
+                  Subtitle:
+                    Visibility: VISIBLE
+                  Title:
+                    FormatText:
+                      RichText: <visual-title>KMS keys per Region</visual-title>
+                    Visibility: VISIBLE
+                  VisualId: 6ed6eb21-16c4-40a9-a9ef-d72999c777b7
+              - KPIVisual:
+                  Actions: []
+                  ChartConfiguration:
+                    FieldWells:
+                      TargetValues: []
+                      TrendGroups: []
+                      Values:
+                        - NumericalMeasureField:
+                            Column:
+                              ColumnName: not_aws_managed
+                              DataSetIdentifier: kmsdashboardtable
+                            FieldId: a183d506-65fa-456a-8b20-b9aa5b32d4bd.0.1727700679301
+                    KPIOptions:
+                      Comparison:
+                        ComparisonMethod: PERCENT_DIFFERENCE
+                      PrimaryValueDisplayType: ACTUAL
+                      PrimaryValueFontConfiguration:
+                        FontColor: '#212121'
+                        FontSize:
+                          Relative: LARGE
+                      SecondaryValueFontConfiguration:
+                        FontSize:
+                          Relative: EXTRA_LARGE
+                      Sparkline:
+                        TooltipVisibility: HIDDEN
+                        Type: AREA
+                        Visibility: VISIBLE
+                      VisualLayoutOptions:
+                        StandardLayout:
+                          Type: VERTICAL
+                    SortConfiguration: {}
+                  ColumnHierarchies: []
+                  Subtitle:
+                    Visibility: VISIBLE
+                  Title:
+                    FormatText:
+                      RichText: |-
+                        <visual-title>
+                          <block align="center">
+                            <b>Total # AWS customer managed keys</b>
+                          </block>
+                        </visual-title>
+                    Visibility: VISIBLE
+                  VisualId: 1e8d6107-ed35-4b94-a9b5-fc58fd54b55c
+              - KPIVisual:
+                  Actions: []
+                  ChartConfiguration:
+                    FieldWells:
+                      TargetValues: []
+                      TrendGroups: []
+                      Values:
+                        - NumericalMeasureField:
+                            Column:
+                              ColumnName: aws_managed_key
+                              DataSetIdentifier: kmsdashboardtable
+                            FieldId: 5be52ad3-fc9b-4fc1-803a-719b331d37dc.0.1727694993780
+                    KPIOptions:
+                      Comparison:
+                        ComparisonMethod: PERCENT_DIFFERENCE
+                      PrimaryValueDisplayType: ACTUAL
+                      PrimaryValueFontConfiguration:
+                        FontColor: '#212121'
+                        FontSize:
+                          Relative: LARGE
+                      SecondaryValueFontConfiguration:
+                        FontSize:
+                          Relative: EXTRA_LARGE
+                      Sparkline:
+                        TooltipVisibility: HIDDEN
+                        Type: AREA
+                        Visibility: VISIBLE
+                      VisualLayoutOptions:
+                        StandardLayout:
+                          Type: VERTICAL
+                    SortConfiguration: {}
+                  ColumnHierarchies: []
+                  Subtitle:
+                    Visibility: VISIBLE
+                  Title:
+                    FormatText:
+                      RichText: |-
+                        <visual-title>
+                          <block align="center">
+                            <b>Total # of </b>
+                          </block>
+                          <br/>
+                          <block align="center">
+                            <b>AWS managed keys</b>
+                          </block>
+                        </visual-title>
+                    Visibility: VISIBLE
+                  VisualId: c8e8112a-872a-4b90-a1c4-5ab70ae6749e
+              - KPIVisual:
+                  Actions: []
+                  ChartConfiguration:
+                    FieldWells:
+                      TargetValues: []
+                      TrendGroups: []
+                      Values:
+                        - CategoricalMeasureField:
+                            AggregationFunction: DISTINCT_COUNT
+                            Column:
+                              ColumnName: region
+                              DataSetIdentifier: kmsdashboardtable
+                            FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.region.0.1727730188546
+                    KPIOptions:
+                      Comparison:
+                        ComparisonMethod: PERCENT_DIFFERENCE
+                      PrimaryValueDisplayType: ACTUAL
+                      PrimaryValueFontConfiguration:
+                        FontColor: '#212121'
+                        FontSize:
+                          Relative: LARGE
+                      SecondaryValueFontConfiguration:
+                        FontSize:
+                          Relative: EXTRA_LARGE
+                      Sparkline:
+                        TooltipVisibility: HIDDEN
+                        Type: AREA
+                        Visibility: VISIBLE
+                      VisualLayoutOptions:
+                        StandardLayout:
+                          Type: VERTICAL
+                    SortConfiguration: {}
+                  ColumnHierarchies: []
+                  Subtitle:
+                    Visibility: VISIBLE
+                  Title:
+                    FormatText:
+                      RichText: |-
+                        <visual-title>
+                          <block align="center">
+                            <b>Total # of </b>
+                          </block>
+                          <br/>
+                          <block align="center">
+                            <b>AWS regions:</b>
+                          </block>
+                        </visual-title>
+                    Visibility: VISIBLE
+                  VisualId: 0b49ee01-ada8-46e5-bb66-fb0da65f77a3
+              - KPIVisual:
+                  Actions: []
+                  ChartConfiguration:
+                    FieldWells:
+                      TargetValues: []
+                      TrendGroups: []
+                      Values:
+                        - CategoricalMeasureField:
+                            AggregationFunction: DISTINCT_COUNT
+                            Column:
+                              ColumnName: accountname
+                              DataSetIdentifier: kmsdashboardtable
+                            FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.accountname.0.1727730073192
+                    KPIOptions:
+                      Comparison:
+                        ComparisonMethod: PERCENT_DIFFERENCE
+                      PrimaryValueDisplayType: ACTUAL
+                      PrimaryValueFontConfiguration:
+                        FontColor: '#212121'
+                        FontSize:
+                          Relative: LARGE
+                      SecondaryValueFontConfiguration:
+                        FontSize:
+                          Relative: EXTRA_LARGE
+                      Sparkline:
+                        TooltipVisibility: HIDDEN
+                        Type: AREA
+                        Visibility: VISIBLE
+                      VisualLayoutOptions:
+                        StandardLayout:
+                          Type: VERTICAL
+                    SortConfiguration: {}
+                  ColumnHierarchies: []
+                  Subtitle:
+                    Visibility: VISIBLE
+                  Title:
+                    FormatText:
+                      RichText: |-
+                        <visual-title>
+                          <block align="center">
+                            <b>Total # of </b>
+                          </block>
+                          <br/>
+                          <block align="center">
+                            <b>AWS accounts:</b>
+                          </block>
+                        </visual-title>
+                    Visibility: VISIBLE
+                  VisualId: 00734a55-527f-474a-9c5b-225600501790
+              - TableVisual:
+                  Actions: []
+                  ChartConfiguration:
+                    FieldOptions:
+                      Order: []
+                      SelectedFieldOptions:
+                        - FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.alias.3.1727692527891
+                          Width: 248px
+                        - FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.action.2.1727692525891
+                          Width: 1345px
+                    FieldWells:
+                      TableAggregatedFieldWells:
+                        GroupBy:
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: kms_cmk_boolean
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: af42977d-e7fc-468d-8ad6-26a601e97e91.21.1727701883380
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: keyid
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.keyid.9.1727692541176
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: alias
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.alias.3.1727692527891
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: accountname
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.accountname.0.1727443324816
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: accountnumber
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.accountnumber.1.1727443326514
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: region
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.region.17.1727692564576
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: concern
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.concern.4.1727692529541
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: action
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.action.2.1727692525891
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: condition
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.condition.5.1727692531324
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: creationdate
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.creationdate.6.1727692533024
+                          - DateDimensionField:
+                              Column:
+                                ColumnName: date
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.date.7.1727692535241
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: effect
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.effect.8.1727692537908
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: eventname
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.eventname.10.1727692543926
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: encryptioncontext
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.encryptioncontext.11.1727692546442
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: sourceipaddress
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.sourceipaddress.12.1727692548477
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: eventtime
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.eventtime.13.1727692551675
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: username
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.username.14.1727692555641
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: principal
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.principal.15.1727692558377
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: principalservice
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.principalservice.16.1727692562275
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: resource
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.resource.18.1727692567477
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: sid
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.sid.19.1727692570609
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: tags
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.tags.20.1727692572927
+                        Values: []
+                    SortConfiguration:
+                      RowSort:
+                        - FieldSort:
+                            Direction: ASC
+                            FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.alias.3.1727692527891
+                    TableOptions:
+                      CellStyle:
+                        Height: 24
+                      HeaderStyle:
+                        Height: 25
+                        TextWrap: WRAP
+                        Visibility: VISIBLE
+                      RowAlternateColorOptions:
+                        Status: ENABLED
+                        UsePrimaryBackgroundColor: ENABLED
+                    TotalOptions:
+                      CustomLabel: Total
+                      Placement: END
+                      TotalsVisibility: HIDDEN
+                  Subtitle:
+                    Visibility: VISIBLE
+                  Title:
+                    FormatText:
+                      RichText: <visual-title>All KMS Key Data</visual-title>
+                    Visibility: VISIBLE
+                  VisualId: 54ea964d-b16f-454e-be09-80152bed0662
+              - KPIVisual:
+                  Actions: []
+                  ChartConfiguration:
+                    FieldWells:
+                      TargetValues:
+                        - NumericalMeasureField:
+                            Column:
+                              ColumnName: distinct_count_region
+                              DataSetIdentifier: kmsdashboardtable
+                            FieldId: 5ccf10aa-c2e7-46b7-8319-ed77dd8f1b24.1.1736167947914
+                      TrendGroups: []
+                      Values:
+                        - CategoricalMeasureField:
+                            AggregationFunction: DISTINCT_COUNT
+                            Column:
+                              ColumnName: keyid
+                              DataSetIdentifier: kmsdashboardtable
+                            FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.keyid.0.1727729952759
+                    KPIOptions:
+                      Comparison:
+                        ComparisonMethod: PERCENT_DIFFERENCE
+                      PrimaryValueDisplayType: ACTUAL
+                      PrimaryValueFontConfiguration:
+                        FontColor: '#212121'
+                        FontSize:
+                          Relative: LARGE
+                      SecondaryValueFontConfiguration:
+                        FontSize:
+                          Relative: EXTRA_LARGE
+                      Sparkline:
+                        TooltipVisibility: HIDDEN
+                        Type: AREA
+                        Visibility: VISIBLE
+                      VisualLayoutOptions:
+                        StandardLayout:
+                          Type: VERTICAL
+                    SortConfiguration: {}
+                  ColumnHierarchies: []
+                  ConditionalFormatting:
+                    ConditionalFormattingOptions:
+                      - ComparisonValue:
+                          TextColor:
+                            Solid:
+                              Color: '#2CAD00'
+                              Expression: (DISTINCT_COUNT({keyid})/nullIf({distinct_count_region},0))-1 > 0.0
+                      - ComparisonValue:
+                          TextColor:
+                            Solid:
+                              Color: '#DE3B00'
+                              Expression: (DISTINCT_COUNT({keyid})/nullIf({distinct_count_region},0))-1 < 0.0
+                      - ComparisonValue:
+                          Icon:
+                            CustomCondition:
+                              Color: '#2CAD00'
+                              Expression: (DISTINCT_COUNT({keyid})/nullIf({distinct_count_region},0))-1 > 0.0
+                              IconOptions:
+                                Icon: CARET_UP
+                      - ComparisonValue:
+                          Icon:
+                            CustomCondition:
+                              Color: '#DE3B00'
+                              Expression: (DISTINCT_COUNT({keyid})/nullIf({distinct_count_region},0))-1 < 0.0
+                              IconOptions:
+                                Icon: CARET_DOWN
+                  Subtitle:
+                    Visibility: VISIBLE
+                  Title:
+                    FormatText:
+                      RichText: |-
+                        <visual-title>
+                          <block align="center">
+                            <b>Total # of </b>
+                          </block>
+                          <br/>
+                          <block align="center">
+                            <b>distinct KMS Keys:</b>
+                          </block>
+                        </visual-title>
+                    Visibility: VISIBLE
+                  VisualId: 36c1348c-9fd4-470f-bc4f-5ba79a89ffd5
+              - CustomContentVisual:
+                  Actions: []
+                  ChartConfiguration:
+                    ContentType: IMAGE
+                    ContentUrl: https://d1.awsstatic.com/awslogo.ee611ab2a1b264187db3ca55a51bccb8156760f2.png
+                    ImageScaling: FIT_TO_HEIGHT
+                  DataSetIdentifier: kmsdashboardtable
+                  Subtitle:
+                    Visibility: VISIBLE
+                  Title:
+                    FormatText:
+                      RichText: <visual-title> </visual-title>
+                    Visibility: VISIBLE
+                  VisualId: 196ab707-6745-47ca-b2b4-42e7745f6f73
+              - PieChartVisual:
+                  Actions:
+                    - ActionOperations:
+                        - FilterOperation:
+                            SelectedFieldsConfiguration:
+                              SelectedFieldOptions: ALL_FIELDS
+                            TargetVisualsConfiguration:
+                              SameSheetTargetVisualConfiguration:
+                                TargetVisualOptions: ALL_VISUALS
+                      CustomActionId: 4f00e282-d574-48af-8f11-d96fff32df9a
+                      Name: Action 1
+                      Status: ENABLED
+                      Trigger: DATA_POINT_CLICK
+                  ChartConfiguration:
+                    DataLabels:
+                      Overlap: DISABLE_OVERLAP
+                      Visibility: VISIBLE
+                    DonutOptions:
+                      ArcOptions:
+                        ArcThickness: MEDIUM
+                    FieldWells:
+                      PieChartAggregatedFieldWells:
+                        Category:
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: accountnumber
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.accountnumber.1.1728119944003
+                        Values:
+                          - NumericalMeasureField:
+                              Column:
+                                ColumnName: distinct_count_keys
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 786d3485-816a-41c7-9e3c-d68658bb219b.1.1727702471835
+                    Legend:
+                      Width: 100px
+                    SortConfiguration:
+                      CategoryItemsLimit:
+                        OtherCategories: INCLUDE
+                      CategorySort:
+                        - FieldSort:
+                            Direction: DESC
+                            FieldId: 786d3485-816a-41c7-9e3c-d68658bb219b.1.1727702471835
+                      SmallMultiplesLimitConfiguration:
+                        OtherCategories: INCLUDE
+                    Tooltip:
+                      FieldBasedTooltip:
+                        AggregationVisibility: HIDDEN
+                        TooltipFields:
+                          - FieldTooltipItem:
+                              FieldId: 786d3485-816a-41c7-9e3c-d68658bb219b.1.1727702471835
+                              Visibility: VISIBLE
+                          - FieldTooltipItem:
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.accountnumber.1.1728119944003
+                              Visibility: VISIBLE
+                        TooltipTitleType: PRIMARY_VALUE
+                      SelectedTooltipType: DETAILED
+                      TooltipVisibility: VISIBLE
+                  ColumnHierarchies: []
+                  Subtitle:
+                    Visibility: VISIBLE
+                  Title:
+                    FormatText:
+                      RichText: <visual-title>KMS keys per Account</visual-title>
+                    Visibility: VISIBLE
+                  VisualId: c7302eb1-a1b9-4fee-bacb-81c12f791810
+              - BarChartVisual:
+                  Actions: []
+                  ChartConfiguration:
+                    BarsArrangement: CLUSTERED
+                    CategoryAxis:
+                      AxisLineVisibility: VISIBLE
+                      ScrollbarOptions:
+                        Visibility: HIDDEN
+                      TickLabelOptions:
+                        RotationAngle: 0
+                    CategoryLabelOptions:
+                      SortIconVisibility: VISIBLE
+                      Visibility: VISIBLE
+                    DataLabels:
+                      Overlap: DISABLE_OVERLAP
+                      Visibility: HIDDEN
+                    FieldWells:
+                      BarChartAggregatedFieldWells:
+                        Category:
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: region
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.region.2.1727702212193
+                        Colors:
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: kms_cmk_boolean
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.alias.1.1727702149753
+                        Values:
+                          - NumericalMeasureField:
+                              Column:
+                                ColumnName: distinct_count_keys
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 786d3485-816a-41c7-9e3c-d68658bb219b.2.1727702280995
+                    Legend:
+                      Height: 39px
+                      Position: BOTTOM
+                      Title:
+                        CustomLabel: KMS key
+                      Width: 160px
+                    Orientation: VERTICAL
+                    SortConfiguration:
+                      CategoryItemsLimit:
+                        OtherCategories: INCLUDE
+                      CategorySort:
+                        - FieldSort:
+                            Direction: DESC
+                            FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.region.2.1727702212193
+                      ColorItemsLimit:
+                        OtherCategories: INCLUDE
+                      ColorSort:
+                        - FieldSort:
+                            Direction: DESC
+                            FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.alias.1.1727702149753
+                      SmallMultiplesLimitConfiguration:
+                        OtherCategories: INCLUDE
+                    Tooltip:
+                      FieldBasedTooltip:
+                        AggregationVisibility: HIDDEN
+                        TooltipFields:
+                          - FieldTooltipItem:
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.region.2.1727702212193
+                              Visibility: VISIBLE
+                          - FieldTooltipItem:
+                              FieldId: 442e655a-b44e-49bf-abeb-13f693590a27.alias.1.1727702149753
+                              Visibility: VISIBLE
+                          - FieldTooltipItem:
+                              FieldId: 786d3485-816a-41c7-9e3c-d68658bb219b.2.1727702280995
+                              Visibility: VISIBLE
+                        TooltipTitleType: PRIMARY_VALUE
+                      SelectedTooltipType: DETAILED
+                      TooltipVisibility: VISIBLE
+                    ValueLabelOptions:
+                      SortIconVisibility: VISIBLE
+                      Visibility: VISIBLE
+                  ColumnHierarchies: []
+                  Subtitle:
+                    Visibility: VISIBLE
+                  Title:
+                    FormatText:
+                      RichText: <visual-title>Type of KMS key per AWS Region</visual-title>
+                    Visibility: VISIBLE
+                  VisualId: fcfe9dda-81cb-47aa-9c14-b0a960e0be96
+              - TableVisual:
+                  Actions: []
+                  ChartConfiguration:
+                    FieldOptions:
+                      Order:
+                        - 8ae41951-cc47-4861-bd74-ba4fb879fa95.keyid
+                        - 8ae41951-cc47-4861-bd74-ba4fb879fa95.alias
+                        - 8ae41951-cc47-4861-bd74-ba4fb879fa95.accountname
+                        - 8ae41951-cc47-4861-bd74-ba4fb879fa95.region.3.1736166123423
+                        - 8ae41951-cc47-4861-bd74-ba4fb879fa95.concern.4.1736167196061
+                        - 8ae41951-cc47-4861-bd74-ba4fb879fa95.resource.5.1736510434544
+                      SelectedFieldOptions:
+                        - CustomLabel: Keyid
+                          FieldId: 8ae41951-cc47-4861-bd74-ba4fb879fa95.keyid
+                        - CustomLabel: Alias
+                          FieldId: 8ae41951-cc47-4861-bd74-ba4fb879fa95.alias
+                        - CustomLabel: Accountname
+                          FieldId: 8ae41951-cc47-4861-bd74-ba4fb879fa95.accountname
+                    FieldWells:
+                      TableAggregatedFieldWells:
+                        GroupBy:
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: keyid
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 8ae41951-cc47-4861-bd74-ba4fb879fa95.keyid
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: alias
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 8ae41951-cc47-4861-bd74-ba4fb879fa95.alias
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: accountname
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 8ae41951-cc47-4861-bd74-ba4fb879fa95.accountname
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: region
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 8ae41951-cc47-4861-bd74-ba4fb879fa95.region.3.1736166123423
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: concern
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 8ae41951-cc47-4861-bd74-ba4fb879fa95.concern.4.1736167196061
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: resource
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 8ae41951-cc47-4861-bd74-ba4fb879fa95.resource.5.1736510434544
+                        Values: []
+                    SortConfiguration: {}
+                    TableOptions:
+                      CellStyle:
+                        Border:
+                          SideSpecificBorder:
+                            InnerHorizontal:
+                              Style: SOLID
+                      HeaderStyle:
+                        Border:
+                          UniformBorder:
+                            Style: NONE
+                      RowAlternateColorOptions:
+                        Status: DISABLED
+                        UsePrimaryBackgroundColor: ENABLED
+                  Subtitle:
+                    Visibility: VISIBLE
+                  Title:
+                    FormatText:
+                      RichText: |-
+                        <visual-title>
+                          <inline font-size="14px">Keys with no </inline>
+                          <inline font-size="14px">
+                            <b>Last Used Date</b>
+                          </inline>
+                          <inline font-size="14px">
+                            <b/>
+                          </inline>
+                        </visual-title>
+                    Visibility: VISIBLE
+                  VisualId: ec7956f1-8443-4994-a1b0-dec9b3009b21
+              - TableVisual:
+                  Actions:
+                    - ActionOperations:
+                        - FilterOperation:
+                            SelectedFieldsConfiguration:
+                              SelectedFieldOptions: ALL_FIELDS
+                            TargetVisualsConfiguration:
+                              SameSheetTargetVisualConfiguration:
+                                TargetVisualOptions: ALL_VISUALS
+                      CustomActionId: 5dee8908-9ab5-4d16-ad93-4a4a015b5706
+                      Name: Action 1
+                      Status: ENABLED
+                      Trigger: DATA_POINT_CLICK
+                  ChartConfiguration:
+                    FieldOptions:
+                      Order:
+                        - 8ae41951-cc47-4861-bd74-ba4fb879fa95.accountname
+                        - 8ae41951-cc47-4861-bd74-ba4fb879fa95.accountnumber.1.1736167113556
+                      SelectedFieldOptions:
+                        - CustomLabel: Account Name
+                          FieldId: 8ae41951-cc47-4861-bd74-ba4fb879fa95.accountname
+                          Width: 338px
+                        - CustomLabel: Account Number
+                          FieldId: 8ae41951-cc47-4861-bd74-ba4fb879fa95.accountnumber.1.1736167113556
+                    FieldWells:
+                      TableAggregatedFieldWells:
+                        GroupBy:
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: accountname
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 8ae41951-cc47-4861-bd74-ba4fb879fa95.accountname
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: accountnumber
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 8ae41951-cc47-4861-bd74-ba4fb879fa95.accountnumber.1.1736167113556
+                        Values: []
+                    SortConfiguration: {}
+                    TableOptions:
+                      CellStyle:
+                        Border:
+                          UniformBorder:
+                            Style: SOLID
+                        Height: 25
+                      HeaderStyle:
+                        Border:
+                          UniformBorder:
+                            Style: NONE
+                      RowAlternateColorOptions:
+                        Status: DISABLED
+                        UsePrimaryBackgroundColor: ENABLED
+                  Subtitle:
+                    Visibility: VISIBLE
+                  Title:
+                    FormatText:
+                      RichText: |-
+                        <visual-title>
+                          <inline font-size="14px">Account Names</inline>
+                        </visual-title>
+                    Visibility: VISIBLE
+                  VisualId: dd3f2a34-c1f5-43cc-9b2a-f149a89a06f4
+              - PieChartVisual:
+                  Actions: []
+                  ChartConfiguration:
+                    CategoryLabelOptions:
+                      AxisLabelOptions:
+                        - ApplyTo:
+                            Column:
+                              ColumnName: concern
+                              DataSetIdentifier: kmsdashboardtable
+                            FieldId: 8ae41951-cc47-4861-bd74-ba4fb879fa95.concern
+                          CustomLabel: Concern
+                    DataLabels:
+                      MeasureLabelVisibility: VISIBLE
+                      Overlap: DISABLE_OVERLAP
+                    DonutOptions:
+                      ArcOptions:
+                        ArcThickness: MEDIUM
+                    FieldWells:
+                      PieChartAggregatedFieldWells:
+                        Category:
+                          - CategoricalDimensionField:
+                              Column:
+                                ColumnName: concern
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: 8ae41951-cc47-4861-bd74-ba4fb879fa95.concern
+                        Values:
+                          - NumericalMeasureField:
+                              Column:
+                                ColumnName: total_items
+                                DataSetIdentifier: kmsdashboardtable
+                              FieldId: b319531f-abe1-4fd5-9e39-fb489cb0961d.1.1736167036017
+                    Legend:
+                      Title:
+                        Visibility: VISIBLE
+                      Visibility: VISIBLE
+                      Width: 320px
+                    SortConfiguration:
+                      CategoryItemsLimit:
+                        OtherCategories: INCLUDE
+                      CategorySort:
+                        - FieldSort:
+                            Direction: DESC
+                            FieldId: b319531f-abe1-4fd5-9e39-fb489cb0961d.1.1736167036017
+                      SmallMultiplesLimitConfiguration:
+                        OtherCategories: INCLUDE
+                    Tooltip:
+                      FieldBasedTooltip:
+                        AggregationVisibility: HIDDEN
+                        TooltipFields:
+                          - FieldTooltipItem:
+                              FieldId: 8ae41951-cc47-4861-bd74-ba4fb879fa95.concern
+                              Visibility: VISIBLE
+                          - FieldTooltipItem:
+                              FieldId: b319531f-abe1-4fd5-9e39-fb489cb0961d.1.1736167036017
+                              Visibility: VISIBLE
+                        TooltipTitleType: PRIMARY_VALUE
+                      SelectedTooltipType: BASIC
+                      TooltipVisibility: VISIBLE
+                  ColumnHierarchies: []
+                  Subtitle:
+                    Visibility: VISIBLE
+                  Title:
+                    FormatText:
+                      PlainText: Total items by Concern
+                    Visibility: VISIBLE
+                  VisualId: d20b7bfb-efec-4fa0-ae2a-979f0e7e5042
+      ThemeArn: !Sub arn:${AWS::Partition}:quicksight::aws:theme/CLASSIC
+      ValidationStrategy:
+        Mode: LENIENT

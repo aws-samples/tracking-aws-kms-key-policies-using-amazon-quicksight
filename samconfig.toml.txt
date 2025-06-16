@@ -1,0 +1,10 @@
+version = 0.1
+[default.deploy.parameters]
+stack_name = "kms-insights-app"
+resolve_s3 = true
+s3_prefix = "kms-insights-app"
+region = "eu-north-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_NAMED_IAM CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+parameter_overrides = "DeploymentType=\"org\" DeployKMSAnalytics=\"y\" pS3BucketPrefix=\"kms-insights\" pQuickSightUserNameArn=\"arn:aws:quicksight:eu-west-2:620253407918:user/default/Admin/tnickl-Isengard\" pRegionsToScan=\"eu-central-1,eu-west-2,us-east-1\""
+image_repositories = []

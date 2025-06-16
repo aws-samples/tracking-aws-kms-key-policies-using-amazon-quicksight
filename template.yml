@@ -1,0 +1,72 @@
+####################################################################
+##  Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+##  SPDX-License-Identifier: MIT-0
+####################################################################
+
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Root stack for managing KMS Insights app resources
+###############################################################################
+Parameters:
+  DeploymentType:
+    Type: String
+    Description: |
+      Provide deployment details in one of the following formats:
+      - "org": Use this, if you want to scan the entire AWS organization.
+      - "local": Use this, if you want to scan only the local account.
+      - Provide a comma-separated list of AWS account IDs, if you want to scan a list of accounts.
+    MinLength: 1
+    MaxLength: 1000
+    AllowedPattern: ^(org|local|([0-9]{12})(,([0-9]{12}))+)$
+    ConstraintDescription: |
+      - "org": To scan the entire AWS organization.
+      - "local": To scan only the local account.
+      - A comma-separated list of AWS account IDs to scan (e.g., 123456789012,987654321098).
+
+  DeployKMSAnalytics:
+    Type: String
+    AllowedValues:
+      - 'y'
+      - 'n'
+    Default: 'y'
+    Description: Whether to deploy the KMS analytics stack (y/n)
+  pS3BucketPrefix:
+    Type: String
+    Default: "kms-insights"
+    Description: The prefix of the S3 bucket to store the Athena query and S3 access log data.
+
+  pQuickSightUserNameArn:
+    Description: Enter the arn of the QuickSight Username.
+    Type: String
+
+  pRegionsToScan:
+    Type: CommaDelimitedList
+    Default: "us-east-1"
+    Description: "List of regions separated by comma (,) without a space"
+
+Conditions:
+  ShouldDeployKMSAnalytics: !Equals 
+    - !Ref DeployKMSAnalytics
+    - 'y'
+
+
+Resources:
+  KMSDataCollector:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: kms-data-collector-stack/kms-insights-data-template.yml
+      Parameters:
+        pS3BucketPrefix: !Ref pS3BucketPrefix
+        pRegionsToScan: !Join [",", !Ref pRegionsToScan]
+        DeploymentType: !Ref DeploymentType
+
+  KMSAnalytics:
+    Type: AWS::Serverless::Application
+    Condition: ShouldDeployKMSAnalytics 
+    Properties:
+      Location: kms-analytics-stack/kms-insights-analytics-template.yml
+      Parameters:
+        pQuickSightUserNameArn: !Ref pQuickSightUserNameArn
+        pS3BucketPrefix: !Ref pS3BucketPrefix
+        pS3BucketLogBucketName: !GetAtt KMSDataCollector.Outputs.S3LogBucketName

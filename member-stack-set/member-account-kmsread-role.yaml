@@ -1,19 +1,21 @@
 # Author: Alex Goff
 # Data Protection Insights - KMS
 #
-# Part 1 of 3 CloudFormation files for member / spoke accounts.
 # This template creates the IAM Role that the KMS Read Lambda will assume.
 
 AWSTemplateFormatVersion: '2010-09-09'
 Description: "KMS Keys"
 Parameters:
   KMSReadLambdaAccount:
-    Description: AWS Account where the KMS Read Lambda is deployed
-    Default: 123456789012
+    Description: AWS Account number where the KMS Read Lambda is deployed
     Type: String
   KMSReadRoleName:
-    Description: Name of the KMS Read Lambda IAM Role. Needs to match KMSReadRole IAM Policy
+    Description: Name of the KMS Read Lambda IAM role. Needs to match KMSReadRole IAM Policy
     Default: XA-KMSRead-Role
+    Type: String
+  KMSReadLambdaRoleName:
+    Description: Name of the central AWS Lambda execution role which assumes the Read Lambda IAM role.
+    Default: kms-insights/kms-insights-LambdaRoleListGetKMSdata
     Type: String
 
 Resources:
@@ -36,6 +38,9 @@ Resources:
               AWS: !Sub "arn:aws:iam::${KMSReadLambdaAccount}:root"
             Action: 
               sts:AssumeRole
+            Condition:
+              ArnLike:
+                aws:PrincipalArn: !Sub "arn:aws:iam::${KMSReadLambdaAccount}:role/${KMSReadLambdaRoleName}"
       Description: This role allows the central KMS Policy Lambda to read the details of the KMS keys in the account
       Path: /
       Policies:
